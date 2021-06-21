@@ -428,6 +428,8 @@ struct mddev {
 
 	/* SW Modified */
 	struct raid_epoch		*__raid_epoch;
+	wait_queue_head_t		io_wait; /* Wake up All */
+	wait_queue_head_t		barrier_wait; /* Wake up 1 Thread */
 };
 
 struct raid_epoch { /* SW Modified */
@@ -441,8 +443,6 @@ struct raid_epoch { /* SW Modified */
 	atomic_t 		complete;
 	unsigned int 		error;
 	unsigned int 		error_flags;
-
-	wait_queue_head_t 	io_wait;
 
 	atomic_t 		e_count;
 };
@@ -626,6 +626,7 @@ extern int strict_strtoul_scaled(const char *cp, unsigned long *res, int scale);
 extern void restore_bitmap_write_access(struct file *file);
 
 extern void mddev_init(struct mddev *mddev);
+extern struct mddev * mddev_find(dev_t unit);
 extern int md_run(struct mddev *mddev);
 extern void md_stop(struct mddev *mddev);
 extern void md_stop_writes(struct mddev *mddev);

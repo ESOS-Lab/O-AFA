@@ -522,6 +522,8 @@ void mddev_init(struct mddev *mddev)
 	atomic_set(&mddev->flush_pending, 0);
 	init_waitqueue_head(&mddev->sb_wait);
 	init_waitqueue_head(&mddev->recovery_wait);
+	init_waitqueue_head(&mddev->io_wait);
+	init_waitqueue_head(&mddev->barrier_wait);
 	mddev->reshape_position = MaxSector;
 	mddev->reshape_backwards = 0;
 	mddev->resync_min = 0;
@@ -534,7 +536,7 @@ void mddev_init(struct mddev *mddev)
 }
 EXPORT_SYMBOL_GPL(mddev_init);
 
-static struct mddev * mddev_find(dev_t unit)
+struct mddev * mddev_find(dev_t unit)
 {
 	struct mddev *mddev, *new = NULL;
 
@@ -607,6 +609,7 @@ static struct mddev * mddev_find(dev_t unit)
 
 	goto retry;
 }
+EXPORT_SYMBOL_GPL(mddev_find);
 
 static inline int mddev_lock(struct mddev * mddev)
 {

@@ -1286,10 +1286,6 @@ void raid_request_dispatched(struct request *req) /* SW Modified : Wake Up Page 
 				raid_epoch = wbi->raid_epoch;
 				atomic_inc(&raid_epoch->complete);
 				put_raid_epoch(raid_epoch);
-				if (atomic_read(&raid_epoch->e_count) == 0) {
-					wake_up_all(&raid_epoch->io_wait);
-					mempool_free(raid_epoch, raid_epoch->conf->raid_epoch_pool);
-				}
 			}
 		}
 
@@ -1302,6 +1298,13 @@ void raid_request_dispatched(struct request *req) /* SW Modified : Wake Up Page 
 		}
 
 		wbi = r5_next_bio(wbi, dev->sector);
+	}
+	
+	if (atomic_read(&raid_epoch->e_count) == 0) {
+		wake_up_all(&raid_epoch->mddev->io_wait);
+		wake_up(&raid_epoch->mddev->barrier_wait);
+		mempool_free(raid_epoch, raid_epoch->conf->raid_epoch_pool);
+		raid_epoch->mddev->__raid_epoch = 0;
 	}
 
 }
@@ -4428,8 +4431,11 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 
 	raid_epoch = mddev->__raid_epoch;
 	
-	if (!raid_epoch) { /* SW Modified */
-		wait_event(raid_epoch->io_wait, atomic_read(&raid_epoch->e_count) == 0);
+	if (raid_epoch && raid_epoch->barrier) { /* SW Modified */
+		if (bi->bi_rw & REQ_BARRIER)
+			wait_event(mddev->barrier_wait, atomic_read(&raid_epoch->e_count) == 0);
+		else
+			wait_event(mddev->io_wait, atomic_read(&raid_epoch->e_count) == 0);
 	}
 
 	if (unlikely(bi->bi_rw & REQ_FLUSH)) {
@@ -6655,8 +6661,6 @@ void raid_start_epoch(struct mddev *mddev) /* SW Modified */
 	raid_epoch->error = 0;
 	raid_epoch->error_flags = 0;
 
-	init_waitqueue_head(&raid_epoch->io_wait);
-
 	get_raid_epoch(raid_epoch);
 
 	mddev->__raid_epoch = raid_epoch;
@@ -6678,11 +6682,13 @@ void raid_finish_epoch(struct mddev *mddev) /* SW Modified */
 	else
 		raid_epoch->barrier = 1;
 
-	mddev->__raid_epoch = 0;
 	put_raid_epoch(raid_epoch);
 
-	if(atomic_read(&raid_epoch->e_count) == 0)
+	if(atomic_read(&raid_epoch->e_count) == 0) {
+		printk(KERN_ERR "[SWDEBUG] (%s): Corner Case Occur: My guess is fdatabarrier!\n",__func__);
 		mempool_free(raid_epoch, raid_epoch->conf->raid_epoch_pool);
+	        mddev->__raid_epoch = 0;
+	}
 }
 EXPORT_SYMBOL(raid_finish_epoch);
 

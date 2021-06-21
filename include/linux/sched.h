@@ -63,6 +63,22 @@ struct fs_struct;
 struct perf_event_context;
 struct blk_plug;
 
+/* SW Modified */
+struct storage_epoch {
+
+	struct request_queue *q;
+
+	unsigned int barrier;
+
+	unsigned int pending;
+	unsigned int dispatch;
+	unsigned int complete;
+	unsigned int error;
+	unsigned int error_flags;
+
+	struct list_head list;
+};
+
 /* UFS: epoch structure */
 struct epoch {
 	struct task_struct *task;
@@ -77,7 +93,8 @@ struct epoch {
 	unsigned int error_flags;
 
         atomic_t e_count;
-
+	
+	struct list_head storage_list;
 	//struct list_head list;
 };
 

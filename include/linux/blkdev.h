@@ -1091,7 +1091,7 @@ extern void blk_request_dispatched(struct request *req);
 extern void blk_start_new_epoch(struct request_queue *q);
 //extern void blk_start_epoch(void);
 extern void blk_start_epoch(struct request_queue *q);
-extern void blk_finish_epoch(void);
+extern void blk_finish_epoch(int enable);
 
 static inline struct request *blk_map_queue_find_tag(struct blk_queue_tag *bqt,
 						int tag)

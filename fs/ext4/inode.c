@@ -44,6 +44,9 @@
 #include "xattr.h"
 #include "acl.h"
 #include "truncate.h"
+/* SW Modified */
+#include "../../drivers/md/md.h"
+#include "../../drivers/md/raid5.h"
 
 #include <trace/events/ext4.h>
 
@@ -2593,7 +2596,18 @@ retry:
 	}
 	/* UFS */
 	if (wbc->sync_mode == WB_BARRIER_ALL) {
-		blk_issue_barrier_plug(&plug);
+		/* SW Modified: Check if this bdev is raid or not */
+		dev_t unit = inode->i_sb->s_dev;
+		struct mddev *mddev = mddev_find(unit);
+		if (mddev) {
+			if (mddev->__raid_epoch->barrier) {
+				struct raid_epoch *raid_epoch = mddev->__raid_epoch;
+				wait_event(mddev->barrier_wait, atomic_read(&raid_epoch->e_count) == 0);
+			} 
+			raid_finish_epoch(mddev);
+		}
+		else
+			blk_issue_barrier_plug(&plug);
 	}
 
 	blk_finish_plug(&plug);

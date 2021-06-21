@@ -1519,6 +1519,10 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 	int el_ret, rw_flags, where = ELEVATOR_INSERT_SORT;
 	struct request *req;
 	unsigned int request_count = 0;
+	/* SW Modified */
+	unsigned int find = 0;
+	struct storage_epoch *storage_epoch;
+	struct list_head *ptr;
 
 	/*
 	 * low level driver can indicate that it wants pages above a
@@ -1545,11 +1549,36 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 			blk_start_epoch(q);
 		}
 		get_epoch(current->__epoch);
+		
+		/* SW Modified */
+		list_for_each(ptr, &current->__epoch->storage_list) {
+			storage_epoch = list_entry(ptr, struct storage_epoch, list);
+			if (storage_epoch->q == q) {
+				find = 1;
+				break;
+			}
+		}
+	
+		if (!find) {
+			storage_epoch = kmalloc(sizeof(struct storage_epoch),GFP_KERNEL);
+			memset(storage_epoch, 0, sizeof(struct storage_epoch));
+			storage_epoch->q = q;
+			
+			storage_epoch->pending = 0;
+			storage_epoch->dispatch = 0;
+			storage_epoch->complete = 0;
+
+			INIT_LIST_HEAD(&storage_epoch->list);
+			list_add_tail(&storage_epoch->list, &current->__epoch->storage_list);
+		}
+
 		bio->bi_epoch = current->__epoch;
 		bio->bi_epoch->pending++;
+		storage_epoch->pending++;
 
 		if (bio->bi_rw & REQ_BARRIER) {
-			blk_finish_epoch();
+			blk_finish_epoch(0);
+			storage_epoch->barrier = 1;
 		}
 	}
 
@@ -3141,7 +3170,7 @@ EXPORT_SYMBOL(blk_finish_plug);
 void blk_issue_barrier_plug(struct blk_plug *plug)
 {
 	if (current->__epoch)
-		blk_finish_epoch();
+		blk_finish_epoch(1);
 	else
 		current->barrier_fail = 1;
 }
@@ -3151,6 +3180,9 @@ EXPORT_SYMBOL(blk_issue_barrier_plug);
 void blk_request_dispatched(struct request *req)
 {
 	struct bio *req_bio;
+	/* SW Modified */
+	struct list_head *ptr, *ptrn;
+	struct storage_epoch *storage_epoch;
 
 	if (req->cmd_type != REQ_TYPE_FS)
 		return;
@@ -3169,9 +3201,17 @@ void blk_request_dispatched(struct request *req)
 				struct epoch *epoch;
 				epoch = bio->bi_epoch;
 				epoch->complete++;
+				/* SW Modified : I think storage_epoch->complete need not be tracked */
 				put_epoch(epoch);
-				if (atomic_read(&epoch->e_count) == 0)
+				if (atomic_read(&epoch->e_count) == 0) {
+					/* SW Modified */
+					list_for_each_safe(ptr, ptrn, &epoch->storage_list) {
+						storage_epoch = list_entry(ptr, struct storage_epoch, list);
+						list_del(ptr);
+						kfree(storage_epoch);
+					}
 					mempool_free(epoch, epoch->q->epoch_pool);
+				}
 			}
 		}
 
@@ -3224,6 +3264,7 @@ EXPORT_SYMBOL(blk_start_new_epoch);
 void blk_start_epoch(struct request_queue *q)
 {
 	struct epoch *epoch = current->__epoch;
+
 	if (epoch) {
 	  printk(KERN_ERR "UFS: %s: unfinished epoch!\n", __func__);
 	  return;
@@ -3245,15 +3286,23 @@ void blk_start_epoch(struct request_queue *q)
 	epoch->error = 0;
 	epoch->error_flags = 0;
 
+	/* SW Modified */
+	INIT_LIST_HEAD(&epoch->storage_list);
+
 	get_epoch(epoch);
 
 	current->__epoch = epoch;	
+
+
 }
 EXPORT_SYMBOL(blk_start_epoch);
 
-void blk_finish_epoch(void)
+void blk_finish_epoch(int enable)
 {
 	struct epoch *epoch = current->__epoch;
+	/* SW Modified */
+	struct storage_epoch *storage_epoch;
+	struct list_head *ptr, *ptrn;
 
 	if (!epoch) {
 	        printk(KERN_ERR "UFS: %s: unstarted epoch!\n", __func__);
@@ -3262,13 +3311,28 @@ void blk_finish_epoch(void)
 	if (epoch->pending == 0) {
 	  epoch->task->barrier_fail = 1;
 	}
-	else
-	  epoch->barrier = 1;
+	else {
+		epoch->barrier = 1;
+		/* SW Modified */
+		if (enable) {
+			list_for_each(ptr, &current->__epoch->storage_list) {
+	  			storage_epoch = list_entry(ptr, struct storage_epoch, list);
+				storage_epoch->barrier = 1;
+			}
+		}
+	}
 
 	current->__epoch = 0;	
 	put_epoch(epoch);
-	if (atomic_read(&epoch->e_count) == 0)
-	  mempool_free(epoch, epoch->q->epoch_pool);
+	if (atomic_read(&epoch->e_count) == 0) {
+		/* SW Modified */
+		list_for_each_safe(ptr, ptrn, &epoch->storage_list) {
+			storage_epoch = list_entry(ptr, struct storage_epoch, list);
+			list_del(ptr);
+			kfree(storage_epoch);
+		}
+		mempool_free(epoch, epoch->q->epoch_pool);
+	}
 }
 EXPORT_SYMBOL(blk_finish_epoch);
 

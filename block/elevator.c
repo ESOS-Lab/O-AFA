@@ -353,6 +353,10 @@ void elv_dispatch_sort(struct request_queue *q, struct request *rq)
 	sector_t boundary;
 	struct list_head *entry;
 	long long stop_flags; /* UFS modification to support REQ_BARRIER and REQ_ORDERED */
+	/* SW Modified */
+	struct storage_epoch *storage_epoch;
+	struct list_head *ptr;
+
 	if (q->last_merge == rq)
 		q->last_merge = NULL;
 
@@ -370,9 +374,21 @@ void elv_dispatch_sort(struct request_queue *q, struct request *rq)
 			struct bio *bio = req_bio;
 			if (bio->bi_epoch) {
 				struct epoch *epoch = bio->bi_epoch;
+				list_for_each(ptr, &epoch->storage_list) {
+					storage_epoch = list_entry(ptr, struct storage_epoch, list);
+					if (storage_epoch->q == q)
+						break;
+				}
+				if (storage_epoch->pending == 1 && storage_epoch->barrier)
+					rq->cmd_bflags |= REQ_BARRIER;
+					
+				/* SW Modified - Wrong Condition at Storgae Scheduler
 				if (epoch->pending == 1 && epoch->barrier) {
 					rq->cmd_bflags |= REQ_BARRIER;			  
 				}
+				*/
+				storage_epoch->pending--;
+				storage_epoch->dispatch++;
 				epoch->pending--;
 				epoch->dispatch++;
 
