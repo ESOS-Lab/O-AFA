@@ -569,11 +569,23 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 			
 			/* SW Modified */
 			obi = sh->dev[i].written;
-			if (obi->bi_rw & REQ_ORDERED) {
+			/*
+			if (i != sh->pd_idx && !obi) {
+				printk(KERN_ERR "[SWDEBUG] ERROR OCCUR, OBI is Missing\n");
+				dump_stack();
+			}
+			*/
+			printk("[SWDEBUG] (%s) SoftLockUp Suspection Point 0\n",__func__);
+			if (i != sh->pd_idx && obi->bi_rw & REQ_ORDERED) {
 				rw |= REQ_ORDERED;
 				while (obi) {
 					bio = obi;
+					if (!bio->raid_epoch) {
+						printk(KERN_ERR "[SWDEBUG] ERROR OCCUR, RAID Epoch is Missing\n");
+						dump_stack();
+					}
 					if (bio->raid_epoch) {
+
 						raid_epoch = bio->raid_epoch;
 						if (atomic_read(&raid_epoch->pending) == 1 && raid_epoch->barrier) {
 							rw |= REQ_BARRIER;
@@ -586,8 +598,9 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 					r5_next_bio(obi, sh->dev[i].sector);
 				}
 			}
-
+			printk("[SWDEBUG] (%s) SoftLockUp Suspection Point 1\n",__func__);
 			raid_epoch = obi->raid_epoch;
+			printk("[SWDEBUG] (%s) SoftLockUp Suspection Point 2\n",__func__);
 
 		} else if (test_and_clear_bit(R5_Wantread, &sh->dev[i].flags))
 			rw = READ;
@@ -1271,21 +1284,28 @@ void raid_request_dispatched(struct request *req) /* SW Modified : Wake Up Page 
 	
 	req_bio = req->bio;
 	
-	if(!req_bio->raid_dispatch)
+	if(!req_bio || !req_bio->raid_dispatch)
 		return;
+	
+	// printk(KERN_ERR "[SWDEBUG] (%s) req_bio : %x\n",__func__, req_bio);
+	// printk(KERN_ERR "[SWDEBUG] (%s) req_bio->raid_dispatch : %x\n",__func__, req_bio->raid_dispatch);
 
+	raid_epoch = 0;
 	sh = req_bio->bi_private;
 	dev = &sh->dev[req_bio->raid_disk_num];
 	wbi = dev->written;
-
+	
+	// printk(KERN_ERR "[SWDEBUG] (%s) Enter\n",__func__);
 	while(wbi && wbi->bi_sector <
 		dev->sector + STRIPE_SECTORS) { 
+		// printk(KERN_INFO "[SWDEBUG] (%s) wbi addr : %x\n",__func__,wbi);
 
 		if (wbi->bi_rw & REQ_ORDERED) {
 			if (wbi->raid_epoch) {
 				raid_epoch = wbi->raid_epoch;
 				atomic_inc(&raid_epoch->complete);
 				put_raid_epoch(raid_epoch);
+				printk(KERN_INFO "[SWDEBUG] (%s) e_count : %d\n",__func__,atomic_read(&raid_epoch->e_count));
 			}
 		}
 
@@ -1300,11 +1320,10 @@ void raid_request_dispatched(struct request *req) /* SW Modified : Wake Up Page 
 		wbi = r5_next_bio(wbi, dev->sector);
 	}
 	
-	if (atomic_read(&raid_epoch->e_count) == 0) {
+	if (raid_epoch && atomic_read(&raid_epoch->e_count) == 0) {
+		printk(KERN_INFO "[SWDEBUG] (%s) Wake Up IO\n",__func__);
 		wake_up_all(&raid_epoch->mddev->io_wait);
 		wake_up(&raid_epoch->mddev->barrier_wait);
-		mempool_free(raid_epoch, raid_epoch->conf->raid_epoch_pool);
-		raid_epoch->mddev->__raid_epoch = 0;
 	}
 
 }
@@ -4432,10 +4451,22 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 	raid_epoch = mddev->__raid_epoch;
 	
 	if (raid_epoch && raid_epoch->barrier) { /* SW Modified */
-		if (bi->bi_rw & REQ_BARRIER)
-			wait_event(mddev->barrier_wait, atomic_read(&raid_epoch->e_count) == 0);
-		else
-			wait_event(mddev->io_wait, atomic_read(&raid_epoch->e_count) == 0);
+		if (bi->bi_rw & REQ_BARRIER) {
+			printk(KERN_INFO "[SWDEBUG] (%s) BARRIER WAIT, bio : %x, e_count : %d\n", __func__, bi, atomic_read(&raid_epoch->e_count));
+			__wait_event(mddev->barrier_wait, atomic_read(&raid_epoch->e_count) == 0);
+		}
+		else {
+			printk(KERN_INFO "[SWDEBUG] (%s) IO WAIT, bio : %x, e_count : %d\n", __func__, bi, atomic_read(&raid_epoch->e_count));
+			__wait_event(mddev->io_wait, atomic_read(&raid_epoch->e_count) == 0);
+		}
+		spin_lock(&mddev->epoch_lock);
+		printk(KERN_INFO "[SWDEBUG] (%s) Epoch Lock Acquired\n",__func__);
+                if(mddev->__raid_epoch) {
+			mddev->__raid_epoch = 0;
+			mempool_free(raid_epoch, raid_epoch->conf->raid_epoch_pool);
+		}
+		spin_unlock(&mddev->epoch_lock);
+		printk(KERN_INFO "[SWDEBUG] (%s) Epoch Lock Released\n",__func__);
 	}
 
 	if (unlikely(bi->bi_rw & REQ_FLUSH)) {
@@ -4562,14 +4593,17 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 			/* SW Modified */
 			if (bi->bi_rw & REQ_ORDERED) {
 				if (!mddev->__raid_epoch) {
+					printk(KERN_INFO "[SWDEBUG] (%s) START EPOCH\n",__func__);
 					raid_start_epoch(mddev);
 				}
 				get_raid_epoch(mddev->__raid_epoch);
+                                printk(KERN_INFO "[SWDEBUG] (%s) e_count : %d\n",__func__,atomic_read(&mddev->__raid_epoch->e_count));
 				bi->raid_epoch = mddev->__raid_epoch;
 				atomic_inc(&bi->raid_epoch->pending);
 		
 				if (bi->bi_rw & REQ_BARRIER) {
 					raid_finish_epoch(mddev);
+	                                printk(KERN_INFO "[SWDEBUG] FINISH EPOCH, (%s) e_count : %d\n",__func__,atomic_read(&mddev->__raid_epoch->e_count));
 				}
 			}
 			
@@ -6648,6 +6682,8 @@ void raid_start_epoch(struct mddev *mddev) /* SW Modified */
 		printk(KERN_ERR "[SWDEBUG] (%s): raid epoch alloc failed\n",__func__);
 		return;
 	}
+	else
+		printk(KERN_INFO "[SWDEBUG] (%s): raid epoch start!\n",__func__);
 
 	memset(raid_epoch, 0, sizeof(struct raid_epoch));
 	
