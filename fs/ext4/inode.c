@@ -2600,11 +2600,14 @@ retry:
 		dev_t unit = inode->i_sb->s_dev;
 		struct mddev *mddev = mddev_find(unit);
 		if (mddev) {
+			spin_lock(&mddev->epoch_lock);
+			printk(KERN_INFO "[SWDEBUG] (%s) Request Finish Raid Epoch from FileSystem\n",__func__);
 			if (mddev->__raid_epoch->barrier) {
 				struct raid_epoch *raid_epoch = mddev->__raid_epoch;
 				wait_event(mddev->barrier_wait, atomic_read(&raid_epoch->e_count) == 0);
 			} 
 			raid_finish_epoch(mddev);
+			spin_unlock(&mddev->epoch_lock);
 		}
 		else
 			blk_issue_barrier_plug(&plug);

@@ -450,13 +450,11 @@ struct raid_epoch { /* SW Modified */
 
 static inline void get_raid_epoch(struct raid_epoch *raid_epoch)
 {
-	printk(KERN_INFO "[SWDEBUG] %s\n",__func__);
 	atomic_inc(&raid_epoch->e_count);
 }
 
 static inline void put_raid_epoch(struct raid_epoch *raid_epoch)
 {
-	printk(KERN_INFO "[SWDEBUG] %s\n",__func__);
 	smp_mb__before_atomic_dec();
 	atomic_dec(&raid_epoch->e_count);
 }

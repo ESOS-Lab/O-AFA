@@ -209,6 +209,8 @@ int ext4_fbarrier_file(struct file *file, loff_t start, loff_t end, int datasync
 	bool needs_barrier = false;
 
 	J_ASSERT(ext4_journal_current_handle() == NULL);
+	
+	printk(KERN_INFO "[SWDEBUG] (%s)\n" , __func__);
 
 	trace_ext4_sync_file_enter(file, datasync);
 

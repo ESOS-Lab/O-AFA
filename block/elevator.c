@@ -40,6 +40,8 @@
 
 #include "blk.h"
 #include "blk-cgroup.h"
+#include "../drivers/md/md.h"
+#include "../drivers/md/raid5.h"
 
 static DEFINE_SPINLOCK(elv_list_lock);
 static LIST_HEAD(elv_list);
@@ -379,8 +381,12 @@ void elv_dispatch_sort(struct request_queue *q, struct request *rq)
 					if (storage_epoch->q == q)
 						break;
 				}
-				if (storage_epoch->pending == 1 && storage_epoch->barrier)
+				if (storage_epoch->pending == 1 && storage_epoch->barrier) {
 					rq->cmd_bflags |= REQ_BARRIER;
+					struct stripe_head *sh;
+					sh = req_bio->bi_private;
+					printk ("[SWDEBUG] (%s) BARRIER BIO: Stripe Sector:%d Disk Idx:%d\n",__func__, sh->sector,req_bio->raid_disk_num);
+				}
 					
 				/* SW Modified - Wrong Condition at Storgae Scheduler
 				if (epoch->pending == 1 && epoch->barrier) {

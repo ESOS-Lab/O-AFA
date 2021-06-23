@@ -1107,7 +1107,7 @@ err_exit:
 }
 EXPORT_SYMBOL(scsi_init_io);
 
-static struct scsi_cmnd *scsi_get_cmd_from_req(struct scsi_device *sdev,
+struct scsi_cmnd *scsi_get_cmd_from_req(struct scsi_device *sdev,
 		struct request *req)
 {
 	struct scsi_cmnd *cmd;
@@ -1130,6 +1130,7 @@ static struct scsi_cmnd *scsi_get_cmd_from_req(struct scsi_device *sdev,
 
 	return cmd;
 }
+EXPORT_SYMBOL(scsi_get_cmd_from_req);
 
 int scsi_setup_blk_pc_cmnd(struct scsi_device *sdev, struct request *req)
 {
@@ -1541,6 +1542,9 @@ static void scsi_request_fn(struct request_queue *q)
 	struct scsi_cmnd *cmd;
 	struct request *req;
 
+        struct bio *req_bio;
+        struct stripe_head *sh;
+
 	if(!get_device(&sdev->sdev_gendev))
 		/* We must be tearing the block queue down already */
 		return;
@@ -1567,7 +1571,15 @@ static void scsi_request_fn(struct request_queue *q)
 			scsi_kill_request(req, q);
 			continue;
 		}
-
+		
+                req_bio = req->bio;
+		/*
+                if (req_bio && req_bio->raid_dispatch) {
+                	sh = req_bio->bi_private;
+			if(sh->sector == 4325384)
+				dump_stack();
+                }
+		*/
 
 		/*
 		 * Remove the request from the request list.
@@ -1575,7 +1587,7 @@ static void scsi_request_fn(struct request_queue *q)
 		if (!(blk_queue_tagged(q) && !blk_queue_start_tag(q, req)))
 			blk_start_request(req);
 		sdev->device_busy++;
-
+		
 		spin_unlock(q->queue_lock);
 		cmd = req->special;
 		if (unlikely(cmd == NULL)) {
@@ -1628,9 +1640,19 @@ static void scsi_request_fn(struct request_queue *q)
 		 * Dispatch the command to the low-level driver.
 		 */
 		rtn = scsi_dispatch_cmd(cmd);
+		
 		spin_lock_irq(q->queue_lock);
-		if (rtn)
+		if (rtn) {
+			printk(KERN_ERR "[SWDEBUG] (%s) Dispatch Failed\n",__func__);
+			struct bio *req_bio;
+			struct stripe_head *sh;
+			req_bio = req->bio;
+			if (req_bio && req_bio->raid_dispatch) {
+				sh = req_bio->bi_private;
+				printk(KERN_ERR "[SWDEBUG] (%s:Failed) Stripe Sector : %d Disk Idx %d\n",__func__,sh->sector,req_bio->raid_disk_num);
+			}
 			goto out_delay;
+		}
 		/* UFS */
 		//if (req->cmd_bflags & REQ_ORDERED)
 		raid_request_dispatched(req);

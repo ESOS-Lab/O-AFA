@@ -566,7 +566,9 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 				rw = WRITE;
 			if (test_bit(R5_Discard, &sh->dev[i].flags))
 				rw |= REQ_DISCARD;
-			
+			/* SW Modified : Case for Dispatch failure */
+			// SetPageDispatch(&sh->dev[i].page);		
+
 			/* SW Modified */
 			obi = sh->dev[i].written;
 			/*
@@ -575,7 +577,6 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 				dump_stack();
 			}
 			*/
-			printk("[SWDEBUG] (%s) SoftLockUp Suspection Point 0\n",__func__);
 			if (i != sh->pd_idx && obi->bi_rw & REQ_ORDERED) {
 				rw |= REQ_ORDERED;
 				while (obi) {
@@ -584,23 +585,34 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 						printk(KERN_ERR "[SWDEBUG] ERROR OCCUR, RAID Epoch is Missing\n");
 						dump_stack();
 					}
-					if (bio->raid_epoch) {
-
+					else {
 						raid_epoch = bio->raid_epoch;
 						if (atomic_read(&raid_epoch->pending) == 1 && raid_epoch->barrier) {
 							rw |= REQ_BARRIER;
 							cache_barrier_stripe = true;
 							barrier_disk_num = i;
 						}
+						smp_mb__before_atomic_dec();
 						atomic_dec(&raid_epoch->pending);
+						smp_mb__after_atomic_dec();
+						
+						/*
+						if (cache_barrier_stripe)
+							printk(KERN_INFO "[SWDEBUG] (%s) BARRIER bio : %x , # of Pending, %d\n ",__func__, obi,atomic_read(&raid_epoch->pending));
+						else
+							printk(KERN_INFO "[SWDEBUG] (%s) bio : %x , # of Pending, %d\n ",__func__, obi,atomic_read(&raid_epoch->pending));
+						*/
 						raid_epoch->dispatch++;
 					}
-					r5_next_bio(obi, sh->dev[i].sector);
+					obi = r5_next_bio(obi, sh->dev[i].sector);
 				}
 			}
-			printk("[SWDEBUG] (%s) SoftLockUp Suspection Point 1\n",__func__);
+			/*
+			if(i == sh->pd_idx) {
+				printk(KERN_INFO "[SWDEBUG] (%s) Stripe Sector :%d Parity Idx :%d\n", __func__, sh->sector, sh->pd_idx);
+			}
+			*/
 			raid_epoch = obi->raid_epoch;
-			printk("[SWDEBUG] (%s) SoftLockUp Suspection Point 2\n",__func__);
 
 		} else if (test_and_clear_bit(R5_Wantread, &sh->dev[i].flags))
 			rw = READ;
@@ -689,7 +701,7 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 				md_sync_acct(rdev->bdev, STRIPE_SECTORS);
 
 			set_bit(STRIPE_IO_STARTED, &sh->state);
-
+	
 			bio_reset(bi);
 			bi->bi_bdev = rdev->bdev;
 			bi->bi_rw = rw;
@@ -1287,39 +1299,46 @@ void raid_request_dispatched(struct request *req) /* SW Modified : Wake Up Page 
 	if(!req_bio || !req_bio->raid_dispatch)
 		return;
 	
-	// printk(KERN_ERR "[SWDEBUG] (%s) req_bio : %x\n",__func__, req_bio);
-	// printk(KERN_ERR "[SWDEBUG] (%s) req_bio->raid_dispatch : %x\n",__func__, req_bio->raid_dispatch);
-
 	raid_epoch = 0;
-	sh = req_bio->bi_private;
-	dev = &sh->dev[req_bio->raid_disk_num];
-	wbi = dev->written;
-	
-	// printk(KERN_ERR "[SWDEBUG] (%s) Enter\n",__func__);
-	while(wbi && wbi->bi_sector <
-		dev->sector + STRIPE_SECTORS) { 
-		// printk(KERN_INFO "[SWDEBUG] (%s) wbi addr : %x\n",__func__,wbi);
-
-		if (wbi->bi_rw & REQ_ORDERED) {
-			if (wbi->raid_epoch) {
-				raid_epoch = wbi->raid_epoch;
-				atomic_inc(&raid_epoch->complete);
-				put_raid_epoch(raid_epoch);
-				printk(KERN_INFO "[SWDEBUG] (%s) e_count : %d\n",__func__,atomic_read(&raid_epoch->e_count));
-			}
-		}
-
-		/* SW Modified : Track Dispatched Page using ops_run_biodrain routine */
-		__raid_request_dispatched(wbi, wbi->bi_sector, dev->sector);
-
-		if (dispatch_bio_bh(wbi)) {
-			wbi = r5_next_bio(wbi, dev->sector);
+	while (req_bio && req_bio->raid_dispatch) {		
+		sh = req_bio->bi_private;
+		end_page_dispatch(sh->dev[req_bio->raid_disk_num].page);
+		// printk(KERN_INFO "[SWDEBUG] (%s) STRIPE_SECTOR : %d, DISK_IDX :%d\n",__func__, sh->sector, req_bio->raid_disk_num);	
+		if (sh->pd_idx == req_bio->raid_disk_num) { /* Handle request merge */
+			printk(KERN_INFO "[SWDEBUG] (%s) Stripe Secotr : %d Parity Idx : %d\n",__func__,sh->sector,req_bio->raid_disk_num);
+			req_bio = req_bio->bi_next;	
 			continue;
 		}
 
-		wbi = r5_next_bio(wbi, dev->sector);
+		dev = &sh->dev[req_bio->raid_disk_num];
+		wbi = dev->written;
+
+		while (wbi && wbi->bi_sector <
+			dev->sector + STRIPE_SECTORS) { 
+			if (wbi->bi_rw & REQ_ORDERED) {
+				if (wbi->raid_epoch) {
+					raid_epoch = wbi->raid_epoch;
+					atomic_inc(&raid_epoch->complete);
+					put_raid_epoch(raid_epoch);
+					printk(KERN_INFO "[SWDEBUG] (%s) e_count :%d\n",__func__,atomic_read(&raid_epoch->e_count));
+				}
+				else
+					printk(KERN_ERR "[SWDEBUG] (%s) Error Occur!\n",__func__);
+			}
+
+			/* SW Modified : Track Dispatched Page using ops_run_biodrain routine */
+			__raid_request_dispatched(wbi, wbi->bi_sector, dev->sector);
+
+			if (dispatch_bio_bh(wbi)) {
+				wbi = r5_next_bio(wbi, dev->sector);
+				continue;
+			}
+			wbi = r5_next_bio(wbi, dev->sector);
+		}
+		printk(KERN_INFO "[SWDEBUG] (%s) Stripe Secotr : %d Disk Idx : %d\n",__func__,sh->sector,req_bio->raid_disk_num);
+		req_bio = req_bio->bi_next;
 	}
-	
+
 	if (raid_epoch && atomic_read(&raid_epoch->e_count) == 0) {
 		printk(KERN_INFO "[SWDEBUG] (%s) Wake Up IO\n",__func__);
 		wake_up_all(&raid_epoch->mddev->io_wait);
@@ -2947,7 +2966,10 @@ static void handle_stripe_clean_event(struct r5conf *conf,
 				pr_debug("Return write for disc %d\n", i);
 				if (test_and_clear_bit(R5_Discard, &dev->flags))
 					clear_bit(R5_UPTODATE, &dev->flags);
+				// printk(KERN_INFO "[SWDEBUG] Before Wait On Page Dispatch (%s) bio : %x sector : %d disk_idx : %d\n",__func__, dev->written, sh->sector,i);
+				wait_on_page_dispatch(sh->dev[i].page);
 				wbi = dev->written;
+				// printk(KERN_INFO "[SWDEBUG] (%s) bio : %x sector : %d disk_idx : %d\n",__func__, dev->written, sh->sector,i);
 				dev->written = NULL;
 				while (wbi && wbi->bi_sector <
 					dev->sector + STRIPE_SECTORS) {
@@ -3722,6 +3744,7 @@ static void handle_stripe(struct stripe_head *sh)
 				 dev->written)) {
 				pr_debug("Writing block %d\n", i);
 				set_bit(R5_Wantwrite, &dev->flags);
+				SetPageDispatch(sh->dev[i].page);/* SW Modified */
 				if (prexor)
 					continue;
 				if (s.failed > 1)
@@ -4448,26 +4471,26 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 	int remaining;
 	struct raid_epoch *raid_epoch;
 
+	spin_lock(&mddev->epoch_lock);
 	raid_epoch = mddev->__raid_epoch;
 	
 	if (raid_epoch && raid_epoch->barrier) { /* SW Modified */
 		if (bi->bi_rw & REQ_BARRIER) {
 			printk(KERN_INFO "[SWDEBUG] (%s) BARRIER WAIT, bio : %x, e_count : %d\n", __func__, bi, atomic_read(&raid_epoch->e_count));
-			__wait_event(mddev->barrier_wait, atomic_read(&raid_epoch->e_count) == 0);
+			wait_event(mddev->barrier_wait, atomic_read(&raid_epoch->e_count) == 0);
 		}
 		else {
 			printk(KERN_INFO "[SWDEBUG] (%s) IO WAIT, bio : %x, e_count : %d\n", __func__, bi, atomic_read(&raid_epoch->e_count));
-			__wait_event(mddev->io_wait, atomic_read(&raid_epoch->e_count) == 0);
+			wait_event(mddev->io_wait, atomic_read(&raid_epoch->e_count) == 0);
 		}
-		spin_lock(&mddev->epoch_lock);
 		printk(KERN_INFO "[SWDEBUG] (%s) Epoch Lock Acquired\n",__func__);
                 if(mddev->__raid_epoch) {
 			mddev->__raid_epoch = 0;
 			mempool_free(raid_epoch, raid_epoch->conf->raid_epoch_pool);
 		}
-		spin_unlock(&mddev->epoch_lock);
 		printk(KERN_INFO "[SWDEBUG] (%s) Epoch Lock Released\n",__func__);
 	}
+	spin_unlock(&mddev->epoch_lock);
 
 	if (unlikely(bi->bi_rw & REQ_FLUSH)) {
 		md_flush_request(mddev, bi);
@@ -4590,8 +4613,11 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 			set_bit(STRIPE_HANDLE, &sh->state);
 			clear_bit(STRIPE_DELAYED, &sh->state);
 
+			printk(KERN_INFO "[SWDEBUG] (%s) Stripe Secotr : %d Disk Idx : %d\n",__func__,sh->sector,dd_idx);
 			/* SW Modified */
 			if (bi->bi_rw & REQ_ORDERED) {
+				printk(KERN_INFO "[SWDEBUG] (%s) bio : %x\n",__func__,bi);
+				spin_lock(&mddev->epoch_lock);
 				if (!mddev->__raid_epoch) {
 					printk(KERN_INFO "[SWDEBUG] (%s) START EPOCH\n",__func__);
 					raid_start_epoch(mddev);
@@ -4605,6 +4631,7 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 					raid_finish_epoch(mddev);
 	                                printk(KERN_INFO "[SWDEBUG] FINISH EPOCH, (%s) e_count : %d\n",__func__,atomic_read(&mddev->__raid_epoch->e_count));
 				}
+				spin_unlock(&mddev->epoch_lock);
 			}
 			
 			if ((bi->bi_rw & REQ_SYNC) &&

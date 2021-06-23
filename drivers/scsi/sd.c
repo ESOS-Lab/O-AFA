@@ -826,6 +826,34 @@ static int scsi_setup_flush_cmnd(struct scsi_device *sdp, struct request *rq)
 	return scsi_setup_blk_pc_cmnd(sdp, rq);
 }
 
+static int scsi_setup_dbarrier_cmnd(struct scsi_device *sdp, struct request *req)
+{
+        struct scsi_cmnd *cmd;
+        int ret = scsi_prep_state_check(sdp, req);
+
+        req->timeout = SD_FLUSH_TIMEOUT;
+        req->retries = SD_MAX_RETRIES;
+        req->cmd[0] = WRITE_10;
+        req->cmd_len = 10;
+
+        if(ret != BLKPREP_OK)
+                return ret;
+
+        cmd = scsi_get_cmd_from_req(sdp, req);
+        if(unlikely(!cmd))
+        return BLKPREP_DEFER;
+
+        memset(&cmd->sdb, 0, sizeof(cmd->sdb));
+        req->buffer = NULL;
+
+        cmd->cmd_len = req->cmd_len;
+        cmd->sc_data_direction = DMA_NONE;
+        cmd->transfersize = 0;
+        cmd->allowed = req->retries;
+
+        return BLKPREP_OK;
+}
+
 static void sd_unprep_fn(struct request_queue *q, struct request *rq)
 {
 	struct scsi_cmnd *SCpnt = rq->special;
@@ -873,6 +901,9 @@ static int sd_prep_fn(struct request_queue *q, struct request *rq)
 		goto out;
 	} else if (rq->cmd_flags & REQ_FLUSH) {
 		ret = scsi_setup_flush_cmnd(sdp, rq);
+		goto out;
+	} else if (!rq->nr_phys_segments && rq->cmd_bflags & REQ_ORDERED) {
+		ret = scsi_setup_dbarrier_cmnd(sdp, rq);
 		goto out;
 	} else if (rq->cmd_type == REQ_TYPE_BLOCK_PC) {
 		ret = scsi_setup_blk_pc_cmnd(sdp, rq);

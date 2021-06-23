@@ -38,6 +38,10 @@
 #include "blk.h"
 #include "blk-cgroup.h"
 
+#include "../drivers/md/md.h"
+#include "../drivers/md/raid5.h"
+
+
 EXPORT_TRACEPOINT_SYMBOL_GPL(block_bio_remap);
 EXPORT_TRACEPOINT_SYMBOL_GPL(block_rq_remap);
 EXPORT_TRACEPOINT_SYMBOL_GPL(block_bio_complete);
@@ -1481,10 +1485,24 @@ static bool attempt_plug_merge(struct request_queue *q, struct bio *bio,
 
 		el_ret = blk_try_merge(rq, bio);
 		if (el_ret == ELEVATOR_BACK_MERGE) {
+			struct stripe_head *sh;
+			/*
+			if (bio->raid_dispatch) {
+				sh = bio->bi_private;
+				printk(KERN_INFO "[SWDEBUG] (%s) Back Merge STRIPE_SECTOR : %d, Disk_Idx : %d\n",__func__, sh->sector, bio->raid_disk_num);
+			}
+			*/
 			ret = bio_attempt_back_merge(q, rq, bio);
 			if (ret)
 				break;
 		} else if (el_ret == ELEVATOR_FRONT_MERGE) {
+			struct stripe_head *sh;
+			/*
+			if (bio->raid_dispatch) {
+				sh = bio->bi_private;
+				printk(KERN_INFO "[SWDEBUG] (%s) Front Merge STRIPE_SECTOR : %d, Disk_Idx : %d\n",__func__, sh->sector, bio->raid_disk_num);
+			}
+			*/
 			ret = bio_attempt_front_merge(q, rq, bio);
 			if (ret)
 				break;
@@ -1523,6 +1541,9 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 	unsigned int find = 0;
 	struct storage_epoch *storage_epoch;
 	struct list_head *ptr;
+
+	struct bio *req_bio;
+	struct stripe_head *sh;
 
 	/*
 	 * low level driver can indicate that it wants pages above a
@@ -1574,11 +1595,18 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 
 		bio->bi_epoch = current->__epoch;
 		bio->bi_epoch->pending++;
-		storage_epoch->pending++;
-
+		
+		if (bio->raid_dispatch) {
+			storage_epoch->pending++;
+			sh = bio->bi_private;
+			printk (KERN_INFO "[SWDEBUG] (%s) # of Pending:%d, STRIPE SECTOR:%d, disk_idx\n", __func__,storage_epoch->pending, sh->sector, bio->raid_disk_num);
+		}
+		
 		if (bio->bi_rw & REQ_BARRIER) {
 			blk_finish_epoch(0);
 			storage_epoch->barrier = 1;
+			if(bio->raid_dispatch)
+				printk(KERN_INFO "[SWDEBUG] (%s) Finish Epoch Request\n");	
 		}
 	}
 
