@@ -368,6 +368,7 @@ void elv_dispatch_sort(struct request_queue *q, struct request *rq)
 
 	boundary = q->end_sector;
 	stop_flags = REQ_SOFTBARRIER | REQ_STARTED;
+	storage_epoch = NULL;
 
 	if (rq->cmd_bflags & REQ_ORDERED) {
 		struct bio *req_bio;
@@ -381,11 +382,13 @@ void elv_dispatch_sort(struct request_queue *q, struct request *rq)
 					if (storage_epoch->q == q)
 						break;
 				}
+				if (!storage_epoch)
+					panic("[STORAGE SCHEDULER] Cannot Find Started Epoch\n");
 				if (storage_epoch->pending == 1 && storage_epoch->barrier) {
 					rq->cmd_bflags |= REQ_BARRIER;
 					struct stripe_head *sh;
 					sh = req_bio->bi_private;
-					printk ("[SWDEBUG] (%s) BARRIER BIO: Stripe Sector:%d Disk Idx:%d\n",__func__, sh->sector,req_bio->raid_disk_num);
+					printk ("[STORAGE SCHEDULER] (%s) BARRIER BIO: Stripe Sector:%d Disk Idx:%d\n",__func__, sh->sector,req_bio->raid_disk_num);
 				}
 					
 				/* SW Modified - Wrong Condition at Storgae Scheduler

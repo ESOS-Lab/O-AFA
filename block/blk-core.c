@@ -1485,24 +1485,10 @@ static bool attempt_plug_merge(struct request_queue *q, struct bio *bio,
 
 		el_ret = blk_try_merge(rq, bio);
 		if (el_ret == ELEVATOR_BACK_MERGE) {
-			struct stripe_head *sh;
-			/*
-			if (bio->raid_dispatch) {
-				sh = bio->bi_private;
-				printk(KERN_INFO "[SWDEBUG] (%s) Back Merge STRIPE_SECTOR : %d, Disk_Idx : %d\n",__func__, sh->sector, bio->raid_disk_num);
-			}
-			*/
 			ret = bio_attempt_back_merge(q, rq, bio);
 			if (ret)
 				break;
 		} else if (el_ret == ELEVATOR_FRONT_MERGE) {
-			struct stripe_head *sh;
-			/*
-			if (bio->raid_dispatch) {
-				sh = bio->bi_private;
-				printk(KERN_INFO "[SWDEBUG] (%s) Front Merge STRIPE_SECTOR : %d, Disk_Idx : %d\n",__func__, sh->sector, bio->raid_disk_num);
-			}
-			*/
 			ret = bio_attempt_front_merge(q, rq, bio);
 			if (ret)
 				break;
@@ -1542,7 +1528,6 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 	struct storage_epoch *storage_epoch;
 	struct list_head *ptr;
 
-	struct bio *req_bio;
 	struct stripe_head *sh;
 
 	/*
@@ -1562,6 +1547,13 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 		where = ELEVATOR_INSERT_FLUSH;
 		goto get_rq;
 	}
+
+	/*
+        if (bio->raid_dispatch && !(bio->bi_rw & REQ_ORDERED)) {
+                sh = bio->bi_private;
+                printk (KERN_INFO "[STORAGE SCHEDULER] (%s) NO ORDERED! STRIPE SECTOR:%d, disk_idx:%d\n", __func__, sh->sector, bio->raid_disk_num);
+        }
+	*/
 
 
 	/* UFS */
@@ -1599,14 +1591,14 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 		if (bio->raid_dispatch) {
 			storage_epoch->pending++;
 			sh = bio->bi_private;
-			printk (KERN_INFO "[SWDEBUG] (%s) # of Pending:%d, STRIPE SECTOR:%d, disk_idx\n", __func__,storage_epoch->pending, sh->sector, bio->raid_disk_num);
+			printk (KERN_INFO "[STORAGE SCHEDULER] (%s) # of Pending:%d, STRIPE SECTOR:%d, disk_idx:%d\n", __func__,storage_epoch->pending, sh->sector, bio->raid_disk_num);
 		}
 		
 		if (bio->bi_rw & REQ_BARRIER) {
 			blk_finish_epoch(0);
 			storage_epoch->barrier = 1;
 			if(bio->raid_dispatch)
-				printk(KERN_INFO "[SWDEBUG] (%s) Finish Epoch Request\n");	
+				printk(KERN_INFO "[STORAGE SCHEDULER] (%s) Finish Epoch Request\n",__func__);	
 		}
 	}
 
