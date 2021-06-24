@@ -40,7 +40,7 @@ struct bio {
 	unsigned long		bi_flags;	/* status, command, etc */
 	unsigned long long	bi_rw;		/* UFS */
         struct epoch            *bi_epoch;      /* UFS epoch */
-	struct raid_epoch	*raid_epoch;	/* SW Modified */
+	// struct raid_epoch	*raid_epoch;	/* SW Modified */
 	/*unsigned long		bi_rw;*/		/* bottom bits READ/WRITE,
 						 * top bits priority
 						 */

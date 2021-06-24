@@ -1922,6 +1922,7 @@ int generic_writepages(struct address_space *mapping,
 	/* UFS */
         if (wbc->sync_mode == WB_BARRIER_ALL) {
                 /* SW Modified: Check if this bdev is raid or not */
+		/*
 		inode = mapping->host;
                 dev_t unit = inode->i_sb->s_dev;
                 struct mddev *mddev = mddev_find(unit);
@@ -1936,7 +1937,8 @@ int generic_writepages(struct address_space *mapping,
                         spin_unlock(&mddev->epoch_lock);
                 }
                 else
-                        blk_issue_barrier_plug(&plug);
+		*/
+                blk_issue_barrier_plug(&plug);
         }
 	blk_finish_plug(&plug);
 	return ret;

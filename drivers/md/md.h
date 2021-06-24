@@ -427,13 +427,28 @@ struct mddev {
 	void (*sync_super)(struct mddev *mddev, struct md_rdev *rdev);
 
 	/* SW Modified */
-	struct raid_epoch		*__raid_epoch;
+	struct {
+		unsigned int		barrier;
+
+		unsigned int		pending;
+		unsigned int		dispatch;
+		unsigned int 		complete;
+		unsigned int		error;
+		unsigned int		error_flags;
+		
+		unsigned int		e_count;
+		unsigned int 		enable;
+
+		spinlock_t		epoch_lock;
+		
+	} raid_epoch;
 	wait_queue_head_t		io_wait; /* Wake up All */
 	wait_queue_head_t		barrier_wait; /* Wake up 1 Thread */
-	spinlock_t			epoch_lock;
 };
 
-struct raid_epoch { /* SW Modified */
+/* SW Modified */
+/*
+struct raid_epoch {
 	struct mddev 		*mddev;
 	struct r5conf 		*conf;
 
@@ -447,17 +462,21 @@ struct raid_epoch { /* SW Modified */
 
 	atomic_t 		e_count;
 };
-
+*/
+/*
 static inline void get_raid_epoch(struct raid_epoch *raid_epoch)
 {
 	atomic_inc(&raid_epoch->e_count);
 }
+*/
 
+/*
 static inline void put_raid_epoch(struct raid_epoch *raid_epoch)
 {
 	smp_mb__before_atomic_dec();
 	atomic_dec(&raid_epoch->e_count);
 }
+*/
 
 static inline void rdev_dec_pending(struct md_rdev *rdev, struct mddev *mddev)
 {
@@ -649,6 +668,6 @@ static inline int mddev_check_plugged(struct mddev *mddev)
 				   sizeof(struct blk_plug_cb));
 }
 /* SW Modified */
-extern struct kmem_cache *raid_epoch_cachep;
+// extern struct kmem_cache *raid_epoch_cachep;
 // extern struct kmem_cache *raid_epoch_link_cachep;
 #endif /* _MD_MD_H */

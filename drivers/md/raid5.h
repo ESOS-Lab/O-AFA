@@ -456,7 +456,7 @@ struct r5conf {
 	struct disk_info	*disks;
 	
 	/* SW Modified */
-	mempool_t 		*raid_epoch_pool;
+//	mempool_t 		*raid_epoch_pool;
 	int			node;
 	//mempool_t *raid_epoch_link_pool;
 

@@ -2600,14 +2600,16 @@ retry:
 		dev_t unit = inode->i_sb->s_dev;
 		struct mddev *mddev = mddev_find(unit);
 		if (mddev) {
-			spin_lock(&mddev->epoch_lock);
+			spin_lock_irq(&mddev->raid_epoch.epoch_lock);
 			printk(KERN_INFO "[SWDEBUG] (%s) Request Finish Raid Epoch from FileSystem\n",__func__);
-			if (mddev->__raid_epoch->barrier) {
-				struct raid_epoch *raid_epoch = mddev->__raid_epoch;
-				wait_event(mddev->barrier_wait, atomic_read(&raid_epoch->e_count) == 0);
-			} 
-			raid_finish_epoch(mddev);
-			spin_unlock(&mddev->epoch_lock);
+			if (!mddev->raid_epoch.pending)
+				printk(KERN_ERR "[SWDEBUG] (%s) Barrier Enabled RAID Fail!\n",__func__);
+			wait_event_lock_irq(mddev->barrier_wait, 
+					!mddev->raid_epoch.barrier,
+					mddev->raid_epoch.epoch_lock);
+			mddev->raid_epoch.barrier = 1;
+			mddev->raid_epoch.e_count--;
+			spin_unlock_irq(&mddev->raid_epoch.epoch_lock);
 		}
 		else
 			blk_issue_barrier_plug(&plug);
