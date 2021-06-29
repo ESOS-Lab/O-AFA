@@ -174,8 +174,10 @@ static void req_bio_endio(struct request *rq, struct bio *bio,
 	bio_advance(bio, nbytes);
 
 	/* don't actually finish bio if it's part of flush sequence */
-	if (bio->bi_size == 0 && !(rq->cmd_flags & REQ_FLUSH_SEQ))
+	if (bio->bi_size == 0 && !(rq->cmd_flags & REQ_FLUSH_SEQ)) {
+		// raid_request_dispatched(rq);
 		bio_endio(bio, error);
+	}
 }
 
 void blk_dump_rq_flags(struct request *rq, char *msg)
@@ -1583,6 +1585,8 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 
 			INIT_LIST_HEAD(&storage_epoch->list);
 			list_add_tail(&storage_epoch->list, &current->__epoch->storage_list);
+			// if (bio->raid_dispatch)
+				// printk(KERN_INFO "[STORAGE SCHEDULER] (%s) Start Epoch Request, Disk idx : %d\n",__func__,bio->raid_disk_num);	
 		}
 
 		bio->bi_epoch = current->__epoch;
@@ -1591,14 +1595,14 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 		if (bio->raid_dispatch) {
 			storage_epoch->pending++;
 			sh = bio->bi_private;
-			printk (KERN_INFO "[STORAGE SCHEDULER] (%s) # of Pending:%d, STRIPE SECTOR:%d, disk_idx:%d\n", __func__,storage_epoch->pending, sh->sector, bio->raid_disk_num);
+			// printk (KERN_INFO "[STORAGE SCHEDULER] (%s) # of Pending:%d, STRIPE SECTOR:%d, disk_idx:%d\n", __func__,storage_epoch->pending, sh->sector, bio->raid_disk_num);
 		}
 		
 		if (bio->bi_rw & REQ_BARRIER) {
 			blk_finish_epoch(0);
 			storage_epoch->barrier = 1;
-			if(bio->raid_dispatch)
-				printk(KERN_INFO "[STORAGE SCHEDULER] (%s) Finish Epoch Request\n",__func__);	
+			// if(bio->raid_dispatch)
+				// printk(KERN_INFO "[STORAGE SCHEDULER] (%s) Finish Epoch Request, Disk idx : %d\n",__func__,bio->raid_disk_num);	
 		}
 	}
 
@@ -3203,6 +3207,8 @@ void blk_request_dispatched(struct request *req)
 	/* SW Modified */
 	struct list_head *ptr, *ptrn;
 	struct storage_epoch *storage_epoch;
+	struct stripe_head *sh;
+	struct r5dev *dev;
 
 	if (req->cmd_type != REQ_TYPE_FS)
 		return;
@@ -3210,11 +3216,22 @@ void blk_request_dispatched(struct request *req)
 	if (!req->__data_len)
 		return;
 
+	raid_request_dispatched(req);
+	
 	req_bio = req->bio;
 
 	while (req_bio) {
 		int i;
 		struct bio *bio = req_bio;
+		
+		if (bio->raid_dispatch) {
+			struct bio *wbi;
+			wbi = NULL;
+			sh = bio->bi_private;
+			dev = &sh->dev[bio->raid_disk_num];
+			wbi = dev->written;
+			// printk(KERN_INFO "[RAID SCHEDULER] (%s) bio:%x, S_Secotr:%d, Disk_Idx:%d\n",__func__, bio, sh->sector, bio->raid_disk_num);
+		}
 
 		if (req->cmd_bflags & REQ_ORDERED) {
 			if (bio->bi_epoch) {

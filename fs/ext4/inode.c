@@ -2444,6 +2444,7 @@ static int ext4_da_writepages(struct address_space *mapping,
 	pgoff_t done_index = 0;
 	pgoff_t end;
 	struct blk_plug plug;
+	unsigned long flags;
 
 	trace_ext4_da_writepages(inode, wbc);
 
@@ -2600,16 +2601,17 @@ retry:
 		dev_t unit = inode->i_sb->s_dev;
 		struct mddev *mddev = mddev_find(unit);
 		if (mddev) {
-			spin_lock_irq(&mddev->raid_epoch.epoch_lock);
-			printk(KERN_INFO "[SWDEBUG] (%s) Request Finish Raid Epoch from FileSystem\n",__func__);
+			wait_event(mddev->barrier_wait, 
+				atomic_read(&mddev->raid_epoch.barrier) == 0);
+			spin_lock(&mddev->raid_epoch.epoch_lock);
+			// printk(KERN_INFO "[SWDEBUG] (%s) Request Finish Raid Epoch from FileSystem\n",__func__);
 			if (!mddev->raid_epoch.pending)
-				printk(KERN_ERR "[SWDEBUG] (%s) Barrier Enabled RAID Fail!\n",__func__);
-			wait_event_lock_irq(mddev->barrier_wait, 
-					!mddev->raid_epoch.barrier,
-					mddev->raid_epoch.epoch_lock);
-			mddev->raid_epoch.barrier = 1;
-			mddev->raid_epoch.e_count--;
-			spin_unlock_irq(&mddev->raid_epoch.epoch_lock);
+				printk(KERN_ERR "[SWDEBUG] (%s) Barrier Enabled RAID Fail!, RAID E_COUNT :%d\n",__func__,atomic_read(&mddev->raid_epoch.e_count));
+			atomic_dec(&mddev->raid_epoch.e_count);
+			smp_mb__after_atomic_dec();
+			printk(KERN_INFO "[RAID SCHEDULER] (%s) RAID E_COUNT :%d\n",__func__,atomic_read(&mddev->raid_epoch.e_count));
+			spin_unlock(&mddev->raid_epoch.epoch_lock);
+			atomic_set(&mddev->raid_epoch.barrier, 1);
 		}
 		else
 			blk_issue_barrier_plug(&plug);

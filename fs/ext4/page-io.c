@@ -232,6 +232,9 @@ static void ext4_end_bio(struct bio *bio, int error)
 	blocksize = 1 << inode->i_blkbits;
 	bio->bi_private = NULL;
 	bio->bi_end_io = NULL;
+
+	// printk(KERN_INFO "[RAID SCHEDULER] (%s) bio : %x\n",__func__,bio);		
+
 	if (test_bit(BIO_UPTODATE, &bio->bi_flags))
 		error = 0;
 	for (i = 0; i < bio->bi_vcnt; i++) {

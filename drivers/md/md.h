@@ -428,7 +428,8 @@ struct mddev {
 
 	/* SW Modified */
 	struct {
-		unsigned int		barrier;
+		//unsigned int		barrier;
+		atomic_t		barrier;
 
 		unsigned int		pending;
 		unsigned int		dispatch;
@@ -436,8 +437,8 @@ struct mddev {
 		unsigned int		error;
 		unsigned int		error_flags;
 		
-		unsigned int		e_count;
-		unsigned int 		enable;
+		atomic_t		e_count;
+		atomic_t 		enable;
 
 		spinlock_t		epoch_lock;
 		

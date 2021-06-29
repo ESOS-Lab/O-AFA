@@ -521,6 +521,9 @@ void mddev_init(struct mddev *mddev)
 	spin_lock_init(&mddev->write_lock);
 	spin_lock_init(&mddev->raid_epoch.epoch_lock);
 	atomic_set(&mddev->flush_pending, 0);
+	atomic_set(&mddev->raid_epoch.barrier, 0); /* SW Modified */
+	atomic_set(&mddev->raid_epoch.enable, 0); /* SW Modified */
+	atomic_set(&mddev->raid_epoch.e_count, 0); /* SW Modified */
 	init_waitqueue_head(&mddev->sb_wait);
 	init_waitqueue_head(&mddev->recovery_wait);
 	init_waitqueue_head(&mddev->io_wait);
