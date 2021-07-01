@@ -232,6 +232,7 @@ struct stripe_head {
 		struct bio	*toread, *read, *towrite, *written;
 		sector_t	sector;			/* sector of this page */
 		unsigned long	flags;
+		atomic_t	dispatch_flag;
 	} dev[1]; /* allocated with extra space depending of RAID geometry */
 };
 
@@ -297,6 +298,8 @@ enum r5dev_flags {
 	R5_Discard,	/* Discard the stripe */
 	R5_OrderedIO,   /* SW Modified */
 	R5_PGdispatch,  /* SW Modified, Give One more opportunity at raid5_write_end_request() */
+	R5_PGdispatch_Wb, /* Debugging Purporse */
+	R5_PGdispatch_Dp, /* Debugging Purporse */
 };
 
 /*
