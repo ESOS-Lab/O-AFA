@@ -316,6 +316,8 @@ static struct task_struct *dup_task_struct(struct task_struct *orig)
 	tsk->barrier_fail = 0;
 	tsk->epoch_fail = 0;
 
+	atomic_set(&tsk->epoch_enable ,0);
+
 	tsk->stack = ti;
 
 	setup_thread_stack(tsk, orig);

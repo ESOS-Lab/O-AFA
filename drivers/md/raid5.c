@@ -585,6 +585,7 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 				if (i == sh->pd_idx)
 					count--;
 				spin_lock(&mddev->raid_epoch.epoch_lock);
+				printk(KERN_INFO "[RAID SCHEDULER] (%s) pending : %d, count :%d\n",__func__,mddev->raid_epoch.pending, count);
 				if (mddev->raid_epoch.pending == count && atomic_read(&mddev->raid_epoch.barrier) == 1) {
 					rw |= REQ_BARRIER;
 					cache_barrier_stripe = true;
@@ -593,15 +594,12 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 				spin_unlock(&mddev->raid_epoch.epoch_lock);
 			}
 
+			spin_lock(&mddev->raid_epoch.epoch_lock);
 			if (i != sh->pd_idx && obi && test_bit(R5_OrderedIO, &sh->dev[i].flags)) {
-				spin_lock(&mddev->raid_epoch.epoch_lock);
-				while (obi) {
-					mddev->raid_epoch.pending--;
-					mddev->raid_epoch.dispatch++;
-					obi = r5_next_bio(obi, sh->dev[i].sector);
-				}
-				spin_unlock(&mddev->raid_epoch.epoch_lock);
+				mddev->raid_epoch.pending--;
+				mddev->raid_epoch.dispatch++;
 			}
+			spin_unlock(&mddev->raid_epoch.epoch_lock);
 			
 		} else if (test_and_clear_bit(R5_Wantread, &sh->dev[i].flags))
 			rw = READ;
@@ -694,7 +692,7 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 				md_sync_acct(rdev->bdev, STRIPE_SECTORS);
 
 			set_bit(STRIPE_IO_STARTED, &sh->state);
-	
+			
 			bio_reset(bi);
 			bi->bi_bdev = rdev->bdev;
 			bi->bi_rw = rw;
@@ -733,8 +731,10 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 				trace_block_bio_remap(bdev_get_queue(bi->bi_bdev),
 						      bi, disk_devt(conf->mddev->gendisk),
 						      sh->dev[i].sector);
-			unsigned long long temp = REQ_ORDERED;
-			// printk(KERN_INFO "[RAID SCHEDULER] (%s) GMR, Sector : %d Disk Idx : %d rw flags : %llx REQ_ORDERED : %llx\n",__func__, sh->sector, i, bi->bi_rw, temp);
+			if (bi->bi_rw & REQ_ORDERED)
+				printk(KERN_INFO "[RAID SCHEDULER] (%s) GMR, Sector : %d Disk Idx : %d rw flags : %llx\n",__func__, sh->sector, i, bi->bi_rw);
+
+			atomic_set(&bi->dispatch_check, 0);
 			generic_make_request(bi);
 		}
 		if (rrdev) {
@@ -776,6 +776,7 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 				trace_block_bio_remap(bdev_get_queue(rbi->bi_bdev),
 						      rbi, disk_devt(conf->mddev->gendisk),
 						      sh->dev[i].sector);
+			atomic_set(&bi->dispatch_check, 0);
 			generic_make_request(rbi);
 		}
 		if (!rdev && !rrdev) {
@@ -807,6 +808,9 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 			bio_get(bi);
 			// set_bit(R5_LOCKED, &sh->dev[i].flags)
 			atomic_inc(&rdev->nr_pending);
+			atomic_inc(&mddev->raid_epoch.e_count);
+			atomic_set(&sh->dev[i].dispatch_flag, 0);
+			printk (KERN_INFO "[RAID SCHEDULER] (%s) Z_BARRIER Issue at Sector : %d, Disk Num : %d, E_Count :%d\n",__func__, sh->sector, i,atomic_read(&mddev->raid_epoch.e_count));
 			generic_make_request(bi);
 			// bio_put(bi);
 		}
@@ -1298,7 +1302,7 @@ void raid_request_dispatched(struct request *req) /* SW Modified : Wake Up Page 
 	if (req->cmd_type != REQ_TYPE_FS)
 		return;
 
-	if (!req->__data_len)
+	if (!req->__data_len && !(req->cmd_bflags & REQ_ORDERED))
 		return;
 	
 	req_bio = req->bio;
@@ -1318,12 +1322,6 @@ void raid_request_dispatched(struct request *req) /* SW Modified : Wake Up Page 
 		
 		dev = &sh->dev[bio->raid_disk_num];
 	
-		if (sh->pd_idx == bio->raid_disk_num || !bio->bi_phys_segments ) {
-			req_bio = bio->bi_next;	
-			continue;
-		}
-		
-
 		dev = &sh->dev[bio->raid_disk_num];
 		wbi = NULL;
 		wbi = dev->written;
@@ -1335,15 +1333,40 @@ void raid_request_dispatched(struct request *req) /* SW Modified : Wake Up Page 
 		*/
 		
 		if (test_bit(R5_PGdispatch_Wb, &dev->flags))
-			printk(KERN_ERR "[RAID SCHEDULER] (raid_request_dispatched) Dispatch Handling at end_write_request\n");
+			printk(KERN_INFO "[RAID SCHEDULER] (raid_request_dispatched) Dispatch Handling at end_write_request\n");
 
 
-		if (wbi && wbi->bi_rw & REQ_ORDERED && !atomic_cmpxchg(&dev->dispatch_flag, 0, 1)) {
+		if (wbi && !atomic_cmpxchg(&dev->dispatch_flag, 0, 1) && wbi->bi_rw & REQ_ORDERED) {
 			flags = true;
 			set_bit(R5_PGdispatch_Dp, &dev->flags);
 			smp_mb__before_atomic_dec();
 			atomic_dec(&mddev->raid_epoch.e_count);
 			barrier();
+			printk(KERN_INFO "[RAID_SCHEDULER] (%s) S_Sector:%d, Disk_Idx:%d, Epoch Count : %d\n", __func__, sh->sector, req_bio->raid_disk_num, atomic_read(&mddev->raid_epoch.e_count));
+			if (atomic_read(&mddev->raid_epoch.e_count) < 0) {
+				printk (KERN_ERR "[RAID SCHEDULER] (%s) Epoch Count is : %d\n",__func__, atomic_read(&mddev->raid_epoch.e_count));
+        	                printk (KERN_ERR "[RAID SCHEDULER] (%s) S_Sector:%d, Disk_Idx:%d\n", __func__, sh->sector, bio->raid_disk_num);
+	                        printk (KERN_ERR "[RAID SCHEDULER] (%s) Writeback? : %d\n", __func__, test_bit(R5_PGdispatch_Wb, &dev->flags));
+			}
+		}
+
+		if (bio->bi_rw & WRITE_BARRIER && !bio->bi_phys_segments && !atomic_cmpxchg(&dev->dispatch_flag, 0, 1)) {
+			flags = true;
+			atomic_dec(&mddev->raid_epoch.e_count);
+			printk(KERN_INFO "[RAID_SCHEDULER] (%s) S_Sector:%d, Disk_Idx:%d, Epoch Count : %d\n", __func__, sh->sector, req_bio->raid_disk_num, atomic_read(&mddev->raid_epoch.e_count));
+			if (atomic_read(&mddev->raid_epoch.e_count) < 0) {
+				printk (KERN_ERR "[RAID SCHEDULER] (%s) Epoch Count is : %d\n",__func__, atomic_read(&mddev->raid_epoch.e_count));
+        	                printk (KERN_ERR "[RAID SCHEDULER] (%s) S_Sector:%d, Disk_Idx:%d\n", __func__, sh->sector, bio->raid_disk_num);
+	                        printk (KERN_ERR "[RAID SCHEDULER] (%s) Writeback? : %d\n", __func__, test_bit(R5_PGdispatch_Wb, &dev->flags));
+			}
+		}
+		
+		if (sh->pd_idx == bio->raid_disk_num && bio->bi_rw & REQ_ORDERED)
+			printk ("[RAID SCHEDULER] (%s) Parity Page Here!\n",__func__);
+		
+		if (sh->pd_idx == bio->raid_disk_num && bio->bi_rw & REQ_ORDERED &&!atomic_cmpxchg(&dev->dispatch_flag, 0, 1)) {
+			flags = true;
+			atomic_dec(&mddev->raid_epoch.e_count);
 			printk(KERN_INFO "[RAID_SCHEDULER] (%s) S_Sector:%d, Disk_Idx:%d, Epoch Count : %d\n", __func__, sh->sector, req_bio->raid_disk_num, atomic_read(&mddev->raid_epoch.e_count));
 			if (atomic_read(&mddev->raid_epoch.e_count) < 0) {
 				printk (KERN_ERR "[RAID SCHEDULER] (%s) Epoch Count is : %d\n",__func__, atomic_read(&mddev->raid_epoch.e_count));
@@ -1372,12 +1395,13 @@ void raid_request_dispatched(struct request *req) /* SW Modified : Wake Up Page 
 	}
 
 	barrier();
-	if (flags && atomic_read(&mddev->raid_epoch.enable) == 1 && atomic_read(&mddev->raid_epoch.e_count) == 0) 	{
+	if (flags && atomic_read(&mddev->raid_epoch.enable) && atomic_read(&mddev->raid_epoch.e_count) == 0) 	{
 		// printk(KERN_INFO "[RAID_SCHEDULER] (%s) Wake up IO Waitqueue\n",__func__);
 		atomic_set(&mddev->raid_epoch.enable,0);
 		atomic_set(&mddev->raid_epoch.barrier,0);
 		wake_up_all(&mddev->io_wait);
 		wake_up(&mddev->barrier_wait);
+		printk(KERN_INFO "[RAID SCHEDULER] (raid_request_dispatched) Finish Epoch!\n");
 	}
 	
 	if (test_bit(R5_PGdispatch_Wb, &dev->flags) && test_bit(R5_PGdispatch_Dp, &dev->flags))
@@ -1393,6 +1417,9 @@ ops_run_biodrain(struct stripe_head *sh, struct dma_async_tx_descriptor *tx)
 	int disks = sh->disks;
 	int i;
 	unsigned long count = 0;
+	struct mddev *mddev;
+
+	mddev = sh->raid_conf->mddev; 
 
 	pr_debug("%s: stripe %llu\n", __func__,
 		(unsigned long long)sh->sector);
@@ -1416,8 +1443,6 @@ ops_run_biodrain(struct stripe_head *sh, struct dma_async_tx_descriptor *tx)
 
 			while (wbi && wbi->bi_sector <
 				dev->sector + STRIPE_SECTORS) {
-				if(++count > 1)
-					printk(KERN_INFO "[RAID SCHEDULR] (%s) Count :%d\n",__func__,count);
 				if (wbi->bi_rw & REQ_FUA)
 					set_bit(R5_WantFUA, &dev->flags);
 				if (wbi->bi_rw & REQ_SYNC)
@@ -1440,6 +1465,7 @@ ops_run_biodrain(struct stripe_head *sh, struct dma_async_tx_descriptor *tx)
 		if (test_bit(R5_OrderedIO,&dev->flags)){
 			dev = &sh->dev[sh->pd_idx];
 			set_bit(R5_OrderedIO, &dev->flags);
+			atomic_inc(&mddev->raid_epoch.e_count);
 			break;
 		}
 	}
@@ -2095,11 +2121,58 @@ static void raid5_end_write_request(struct bio *bi, int error)
 	struct bio *wbi = NULL;
 	struct r5dev *dev;
 	unsigned long flags;
+        struct list_head *ptr, *ptrn;
+	struct stroage_epoch *storage_epoch;
 
-	if (!bi->bi_phys_segments && bi->bi_rw & REQ_BARRIER) {
+	flags = false;
+	if (bi->bi_epoch && !atomic_cmpxchg(&bi->dispatch_check,0,1)) {
+        	struct epoch *epoch;
+                epoch = bi->bi_epoch;
+                epoch->complete++;
+                /* SW Modified : I think storage_epoch->complete need not be tracked */
+                put_epoch(epoch);
+                printk(KERN_INFO "[STORAGE SCHEDULER] (%s) E_Count : %d, S_Secotr:%d, Disk_Idx:%d\n",__func__, atomic_read(&epoch->e_count), sh->sector, bi->raid_disk_num);
+                if (atomic_read(&epoch->e_count) == 0) {
+                        /* SW Modified */
+                        spin_lock_irqsave(&epoch->list_lock, flags);
+                        list_for_each_safe(ptr, ptrn, &epoch->storage_list) {
+                                storage_epoch = list_entry(ptr, struct storage_epoch, list);
+                                list_del(ptr);
+                                kfree(storage_epoch);
+                        }
+                        spin_unlock_irqrestore(&epoch->list_lock, flags);
+                        atomic_set(&epoch->task->epoch_enable, 0);
+                        printk (KERN_INFO "[STORAGE SCHEDULER] (%s) Epoch Pool is freed!\n",__func__);
+                        mempool_free(epoch, epoch->q->epoch_pool);
+                }
+        }
+
+	if (!bi->bi_phys_segments && bi->bi_rw & WRITE_BARRIER) {
 		rdev = conf->disks[bi->raid_disk_num].rdev; 
 		bio_put(bi);
 		rdev_dec_pending(rdev, conf->mddev);
+
+		dev = &sh->dev[bi->raid_disk_num]; 
+
+                if (!atomic_cmpxchg(&dev->dispatch_flag, 0, 1)) {
+                        flags = true;
+			atomic_dec(&mddev->raid_epoch.e_count);
+                	printk(KERN_INFO "[RAID_SCHEDULER] (%s) S_Sector:%d, Disk_Idx:%d, Epoch Count : %d\n", __func__, sh->sector, bi->raid_disk_num, atomic_read(&mddev->raid_epoch.e_count));
+                	if (atomic_read(&mddev->raid_epoch.e_count) < 0) {
+                	        printk (KERN_ERR "[RAID SCHEDULER] (%s) Epoch Count is : %d\n",__func__, atomic_read(&mddev->raid_epoch.e_count));
+                	        printk (KERN_ERR "[RAID SCHEDULER] (%s) S_Sector:%d, Disk_Idx:%d\n", __func__, sh->sector, bi->raid_disk_num);
+                	        printk (KERN_ERR "[RAID SCHEDULER] (%s) Dispatch? : %d\n", __func__, test_bit(R5_PGdispatch_Dp, &dev->flags));
+                	}
+                }
+
+        	if (flags && atomic_read(&mddev->raid_epoch.enable) == 1 && atomic_read(&mddev->raid_epoch.e_count) == 0){
+        	        atomic_set(&mddev->raid_epoch.enable,0);
+                	atomic_set(&mddev->raid_epoch.barrier,0);
+                	wake_up_all(&mddev->io_wait);
+                	wake_up(&mddev->barrier_wait);
+			printk(KERN_INFO "[RAID SCHEDULER] (%s) Finish Epoch!\n",__func__);
+        	}
+
 		return;
 	}
 
@@ -2171,7 +2244,7 @@ static void raid5_end_write_request(struct bio *bi, int error)
 		}
 		*/
 
-        if (wbi && wbi->bi_rw & REQ_ORDERED && !atomic_cmpxchg(&dev->dispatch_flag, 0, 1)) {
+        if (wbi && !atomic_cmpxchg(&dev->dispatch_flag, 0, 1) && wbi->bi_rw & REQ_ORDERED) {
 		flags = true;
 		set_bit(R5_PGdispatch_Wb, &dev->flags);
         	smp_mb__before_atomic_dec();
@@ -2185,6 +2258,18 @@ static void raid5_end_write_request(struct bio *bi, int error)
 		}
         }
 	
+        if (sh->pd_idx == bi->raid_disk_num && bi->bi_rw & REQ_ORDERED && !atomic_cmpxchg(&dev->dispatch_flag, 0, 1)) {
+        	flags = true;
+		set_bit(R5_PGdispatch_Wb, &dev->flags);
+                atomic_dec(&mddev->raid_epoch.e_count);
+                printk(KERN_INFO "[RAID_SCHEDULER] (%s) S_Sector:%d, Disk_Idx:%d, Epoch Count : %d\n", __func__, sh->sector, bi->raid_disk_num, atomic_read(&mddev->raid_epoch.e_count));
+                if (atomic_read(&mddev->raid_epoch.e_count) < 0) {
+                	printk (KERN_ERR "[RAID SCHEDULER] (%s) Epoch Count is : %d\n",__func__, atomic_read(&mddev->raid_epoch.e_count));
+			printk (KERN_ERR "[RAID SCHEDULER] (%s) S_Sector:%d, Disk_Idx:%d\n", __func__, sh->sector, bi->raid_disk_num);
+			printk (KERN_ERR "[RAID SCHEDULER] (%s) Dispatch? : %d\n", __func__, test_bit(R5_PGdispatch_Dp, &dev->flags));
+		}
+        }
+
 
         while (wbi && wbi->bi_sector <
         	dev->sector + STRIPE_SECTORS) {
@@ -2206,6 +2291,7 @@ static void raid5_end_write_request(struct bio *bi, int error)
 		atomic_set(&mddev->raid_epoch.barrier,0);
 		wake_up_all(&mddev->io_wait);
 		wake_up(&mddev->barrier_wait);
+		printk(KERN_INFO "[RAID SCHEDULER] (%s) Finish Epoch!\n",__func__);
 	}
 
 	if (dev->page)
@@ -2213,7 +2299,6 @@ static void raid5_end_write_request(struct bio *bi, int error)
 	
 	if (test_bit(R5_PGdispatch_Wb, &dev->flags) && test_bit(R5_PGdispatch_Dp, &dev->flags))
 		panic("Double Dispatch Checkd\n");	
-
 
 	if (!test_and_clear_bit(R5_DOUBLE_LOCKED, &sh->dev[i].flags)) {
 		clear_bit(R5_LOCKED, &sh->dev[i].flags);
@@ -2693,6 +2778,11 @@ schedule_reconstruction(struct stripe_head *sh, struct stripe_head_state *s,
 		s->locked, s->ops_request);
 }
 
+static int check_condition(struct mddev *mddev) 
+{
+
+}
+
 /*
  * Each stripe/dev can have one or more bion attached.
  * toread/towrite point to the first in a chain.
@@ -2702,6 +2792,7 @@ static int add_stripe_bio(struct stripe_head *sh, struct bio *bi, int dd_idx, in
 {
 	struct bio **bip;
 	struct r5conf *conf = sh->raid_conf;
+	struct mddev *mddev = conf->mddev;
 	int firstwrite=0;
 
 	pr_debug("adding bi b#%llu to stripe s#%llu\n",
@@ -2732,6 +2823,7 @@ static int add_stripe_bio(struct stripe_head *sh, struct bio *bi, int dd_idx, in
 		goto overlap;
 
 	BUG_ON(*bip && bi->bi_next && (*bip) != bi->bi_next);
+	
 	if (*bip)
 		bi->bi_next = *bip;
 	*bip = bi;
@@ -3105,34 +3197,6 @@ static void handle_stripe_clean_event(struct r5conf *conf,
 				if (!atomic_read(&dev->dispatch_flag)) {
 					/* This Call Path is Unwanted But for Exception Handling*/
 					printk (KERN_ERR "[RAID_SCHEDULER] (%s) Dispatch Missing, Sector : %d, Disk_Idx :%d\n",__func__, sh->sector, i);
-					/*
-        				while (wbi && wbi->bi_sector <
-                				dev->sector + STRIPE_SECTORS) {
-                				if (test_and_set_bit(R5_PGdispatch, &dev->flags))
-                        				break;
-                				flags = true;
-                				if (wbi->bi_rw & REQ_ORDERED) {
-                        				atomic_dec(&mddev->raid_epoch.e_count);
-                        				BUG_ON (atomic_read(&mddev->raid_epoch.e_count) < 0);
-                        				//printk(KERN_INFO "[RAID_SCHEDULER] (%s) S_Sector:%d, Disk_Idx:%d, Epoch Count : %d\n", __func__, sh->sector, bi->raid_disk_num, atomic_read(&mddev->raid_epoch.e_count));
-                				}
-
-                				__raid_request_dispatched(wbi, wbi->bi_sector, dev->sector);
-
-                				if (dispatch_bio_bh(wbi)) {
-                        				wbi = r5_next_bio(wbi, dev->sector);
-                        				continue;
-                				}
-                				wbi = r5_next_bio(wbi, dev->sector);
-        				}
-
-        				if (flags && atomic_read(&mddev->raid_epoch.enable) == 1 && atomic_read(&mddev->raid_epoch.e_count) == 0){
-                				atomic_set(&mddev->raid_epoch.enable,0);
-                				atomic_set(&mddev->raid_epoch.barrier,0);
-                				wake_up_all(&mddev->io_wait);
-                				wake_up(&mddev->barrier_wait);
-        				}
-					*/
 				}
 				
 				dev->written = NULL;
@@ -4637,21 +4701,18 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 	const int rw = bio_data_dir(bi);
 	int remaining;
 	unsigned long flags;
+	unsigned int pending = 0;
 
-	if (bi->bi_rw & REQ_BARRIER) {
-		// printk (KERN_INFO "[WAIT_QUEUE] (%s) Waiting on Barrer Queue\n",__func__);
-		wait_event(mddev->barrier_wait,
-				atomic_cmpxchg(&mddev->raid_epoch.barrier, 0, 1) == 0);
-		// printk (KERN_INFO "[WAIT_QUEUE] (%s) Wait on Barrier Queue Finished\n",__func__);
-	}
-	else {
-		// printk (KERN_INFO "[WAIT_QUEUE] (%s) Waiting on IO Queue\n",__func__);
-		wait_event(mddev->io_wait,
-				atomic_read(&mddev->raid_epoch.barrier) == 0);
-		// printk (KERN_INFO "[WAIT_QUEUE] (%s) Wait on IO Queue Finished\n",__func__);
-	}
-	
-	barrier();
+        if (bi->bi_rw & REQ_BARRIER) {
+                wait_event(mddev->barrier_wait,
+                                !atomic_cmpxchg(&mddev->raid_epoch.barrier, 0, 1));
+                if (!atomic_read(&mddev->raid_epoch.barrier))
+                        printk (KERN_ERR "[RAID_SCHEDULER] (%s) Barrier is Disabled?\n",__func__);
+        }
+        else {
+                wait_event(mddev->barrier_wait,
+                                !atomic_read(&mddev->raid_epoch.barrier));
+        }
 
 	if (unlikely(bi->bi_rw & REQ_FLUSH)) {
 		md_flush_request(mddev, bi);
@@ -4765,64 +4826,51 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 				 * add failed due to overlap.  Flush everything
 				 * and wait a while
 				 */
+				printk(KERN_INFO "[RAID SCHEDULER] (%s) Retry!\n",__func__);
 				md_wakeup_thread(mddev->thread);
 				release_stripe(sh);
 				schedule();
 				goto retry;
 			}
+
+        		/* SW Modified */
+        		if (bi->bi_rw & REQ_ORDERED) {
+                		spin_lock(&mddev->raid_epoch.epoch_lock);
+                		if (!atomic_cmpxchg(&mddev->raid_epoch.enable, 0, 1)) { /* Raid Epoch Start! */
+                        		mddev->raid_epoch.pending = 0;
+                        		mddev->raid_epoch.dispatch = 0;
+                        		mddev->raid_epoch.complete = 0;
+                        		atomic_inc(&mddev->raid_epoch.e_count);
+                        		printk(KERN_INFO "[RAID SCHEDULER] (%s) Epoch Start! bio:%x, S_Secotr:%d, Disk_Idx:%d, RAID E_COUNT :%d BARRIER :%d\n",__func__, bi, sh->sector, dd_idx, atomic_read(&mddev->raid_epoch.e_count), !!(bi->bi_rw & REQ_BARRIER));
+                		}
+                		mddev->raid_epoch.pending++;
+                		atomic_inc(&mddev->raid_epoch.e_count);
+                		if (bi->bi_rw & REQ_BARRIER) { /* Raid Epoch Finish! */
+                        		if (!atomic_read(&mddev->raid_epoch.barrier)) {
+                                		printk(KERN_ERR "[RAID SCHEDULER] (%s) Epoch Count :%d\n",__func__, atomic_read(&mddev->raid_epoch.e_count));
+                                		printk(KERN_ERR "[RAID SCHEDULER] (%s) Barrier is Disabled\n",__func__);
+                        		}		
+                        	atomic_dec(&mddev->raid_epoch.e_count);
+                        		if (atomic_read(&mddev->raid_epoch.e_count) <= 0)
+                                		printk(KERN_ERR "[RAID SCHEDULER] (%s) Epoch Count :%d\n",__func__, atomic_read(&mddev->raid_epoch.e_count));
+                                		printk(KERN_INFO "[RAID SCHEDULER] (%s) Epoch Finish! bio:%x, S_Secotr:%d, Disk_Idx:%d, RAID E_COUNT :%d BARRIER :%d\n",__func__, bi, sh->sector, dd_idx, atomic_read(&mddev->raid_epoch.e_count), !!(bi->bi_rw & REQ_BARRIER));
+                        	}
+                		spin_unlock(&mddev->raid_epoch.epoch_lock);
+                		printk(KERN_INFO "[RAID SCHEDULER] (%s) bio:%x, S_Secotr:%d, Disk_Idx:%d, RAID E_COUNT :%d BARRIER :%d\n",__func__, bi, sh->sector, dd_idx, atomic_read(&mddev->raid_epoch.e_count), !!(bi->bi_rw & REQ_BARRIER));
+       			}
+
+
+
 			finish_wait(&conf->wait_for_overlap, &w);
 			set_bit(STRIPE_HANDLE, &sh->state);
 			clear_bit(STRIPE_DELAYED, &sh->state);
-
-			/* SW Modified */
-			if (bi->bi_rw & REQ_ORDERED) {
-				spin_lock(&mddev->raid_epoch.epoch_lock);
-				if (!atomic_read(&mddev->raid_epoch.enable)) { /* Raid Epoch Start! */
-					atomic_set(&mddev->raid_epoch.barrier, 0);
-					mddev->raid_epoch.pending = 0;
-					mddev->raid_epoch.dispatch = 0;
-					mddev->raid_epoch.complete = 0;
-
-					mddev->raid_epoch.error = 0;
-					mddev->raid_epoch.error_flags = 0;
-					
-					atomic_set(&mddev->raid_epoch.enable,1);
-					atomic_inc(&mddev->raid_epoch.e_count);	
-					printk(KERN_INFO "[RAID SCHEDULER] (%s) Epoch Start! bio:%x, S_Secotr:%d, Disk_Idx:%d, RAID E_COUNT :%d BARRIER :%d\n",__func__, bi, sh->sector, dd_idx, atomic_read(&mddev->raid_epoch.e_count), bi->bi_rw & REQ_BARRIER);
-				}
-				smp_mb__before_atomic_inc();
-				atomic_inc(&mddev->raid_epoch.e_count);
-				smp_mb__after_atomic_inc();
-				mddev->raid_epoch.pending++;
-				if (bi->bi_rw & REQ_BARRIER) { /* Raid Epoch Finish! */
-					atomic_set(&mddev->raid_epoch.barrier,1);
-					atomic_dec(&mddev->raid_epoch.e_count);
-					barrier();
-					if (atomic_read(&mddev->raid_epoch.e_count) <= 0)
-						panic("[RAID SCHEDULER] (%s) Epoch Count :%d\n",__func__, atomic_read(&mddev->raid_epoch.e_count));
-					printk(KERN_INFO "[RAID SCHEDULER] (%s) Epoch Finish! bio:%x, S_Secotr:%d, Disk_Idx:%d, RAID E_COUNT :%d BARRIER :%d\n",__func__, bi, sh->sector, dd_idx, atomic_read(&mddev->raid_epoch.e_count), !!(bi->bi_rw & REQ_BARRIER));
-				}
-				spin_unlock(&mddev->raid_epoch.epoch_lock);
-				printk(KERN_INFO "[RAID SCHEDULER] (%s) bio:%x, S_Secotr:%d, Disk_Idx:%d, RAID E_COUNT :%d BARRIER :%d\n",__func__, bi, sh->sector, dd_idx, atomic_read(&mddev->raid_epoch.e_count), !!(bi->bi_rw & REQ_BARRIER));
-			}
 			
-			/*
-			if (sh->sector == 2688 && dd_idx == 1)
-				panic("[RAID SCHEDULER] (%s) bio:%x, S_Secotr:%d, Disk_Idx:%d, RAID E_COUNT :%d\n",__func__, bi, sh->sector, dd_idx, atomic_read(&mddev->raid_epoch.e_count));
-			*/
-
 			if ((bi->bi_rw & REQ_SYNC) &&
 			    !test_and_set_bit(STRIPE_PREREAD_ACTIVE, &sh->state))
 				atomic_inc(&conf->preread_active_stripes);
 			release_stripe_plug(mddev, sh);
 		} else {
 			/* cannot get stripe for read-ahead, just give-up */
-			if (bi->bi_rw & REQ_BARRIER) {
-				printk (KERN_ERR "[RAID SCHEDULER] (%s) Accept block I/O Fail!, Barrier : %d\n",__func__,atomic_read(&mddev->raid_epoch.barrier));
-				atomic_set(&mddev->raid_epoch.barrier, 0);
-				wake_up_all(&mddev->io_wait);
-				wake_up(&mddev->barrier_wait);
-			}
 			clear_bit(BIO_UPTODATE, &bi->bi_flags);
 			finish_wait(&conf->wait_for_overlap, &w);
 			break;

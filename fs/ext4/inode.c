@@ -2601,7 +2601,7 @@ retry:
 		dev_t unit = inode->i_sb->s_dev;
 		struct mddev *mddev = mddev_find(unit);
 		if (mddev) {
-			if (atomic_cmpxchg(&mddev->raid_epoch.barrier, 0, 1) == 0) { /* Barrier Flag is not set */
+			if (!atomic_cmpxchg(&mddev->raid_epoch.barrier, 0, 1)) { /* Barrier Flag is not set */
 				spin_lock(&mddev->raid_epoch.epoch_lock);
 				if (mddev->raid_epoch.pending) {
 					printk(KERN_INFO "[SWDEBUG] (%s) Barrier Enabled RAID Success!, RAID E_COUNT :%d\n",__func__,atomic_read(&mddev->raid_epoch.e_count));
@@ -2620,11 +2620,6 @@ retry:
                                 	current->barrier_fail = 1;
 				}				
 			}
-			/*
-			else {
-				// Do Nothing	
-			}
-			*/
 		}
 		else
 			blk_issue_barrier_plug(&plug);

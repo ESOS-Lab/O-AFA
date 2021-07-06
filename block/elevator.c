@@ -359,6 +359,7 @@ void elv_dispatch_sort(struct request_queue *q, struct request *rq)
 	struct storage_epoch *storage_epoch;
 	struct list_head *ptr;
 	struct stripe_head *sh;
+	unsigned long flags;
 
 	if (q->last_merge == rq)
 		q->last_merge = NULL;
@@ -378,31 +379,41 @@ void elv_dispatch_sort(struct request_queue *q, struct request *rq)
 			struct bio *bio = req_bio;
 			if (bio->bi_epoch) {
 				struct epoch *epoch = bio->bi_epoch;
+				spin_lock_irqsave(&epoch->list_lock,flags);
 				list_for_each(ptr, &epoch->storage_list) {
 					storage_epoch = list_entry(ptr, struct storage_epoch, list);
 					if (storage_epoch->q == q)
 						break;
 				}
-				if (!storage_epoch)
-					panic("[STORAGE SCHEDULER] Cannot Find Started Epoch\n");
-				if (storage_epoch->pending == 1 && storage_epoch->barrier) {
+				spin_unlock_irqrestore(&epoch->list_lock,flags);
+				if (!storage_epoch) {
+					printk(KERN_ERR "[STORAGE SCHEDULER] Immediate Return!\n");
+					return;
+				}
+				else if (storage_epoch->pending == 1 && storage_epoch->barrier) {
 					rq->cmd_bflags |= REQ_BARRIER;
-					sh = req_bio->bi_private;
-					//printk ("[STORAGE SCHEDULER] (%s) BARRIER BIO: Stripe Sector:%d Disk Idx:%d\n",__func__, sh->sector,req_bio->raid_disk_num);
+					if (bio->raid_dispatch) {
+						sh = req_bio->bi_private;
+						printk (KERN_INFO "[STORAGE SCHEDULER] (%s) E_count : %d BARRIER BIO: Stripe Sector:%d Disk Idx:%d\n",__func__, atomic_read(&epoch->e_count), sh->sector,req_bio->raid_disk_num);
+					}
 				}
 				else {
-					sh = req_bio->bi_private;
-					//printk ("[STORAGE SCHEDULER] (%s) ORDERED BIO: Stripe Sector:%d Disk Idx:%d\n",__func__, sh->sector,req_bio->raid_disk_num);
+					if (bio->raid_dispatch) {
+						sh = req_bio->bi_private;
+						printk (KERN_INFO "[STORAGE SCHEDULER] (%s) E_count : %d ORDERED BIO: Stripe Sector:%d Disk Idx:%d\n",__func__, atomic_read(&epoch->e_count), sh->sector,req_bio->raid_disk_num);
+					}
 				}	
 				/* SW Modified - Wrong Condition at Storgae Scheduler
 				if (epoch->pending == 1 && epoch->barrier) {
 					rq->cmd_bflags |= REQ_BARRIER;			  
 				}
 				*/
+				spin_lock_irqsave(&epoch->list_lock,flags);
 				storage_epoch->pending--;
 				storage_epoch->dispatch++;
 				epoch->pending--;
 				epoch->dispatch++;
+				spin_unlock_irqrestore(&epoch->list_lock,flags);
 
 			}
 			req_bio = bio->bi_next;

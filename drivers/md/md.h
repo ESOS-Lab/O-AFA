@@ -431,7 +431,7 @@ struct mddev {
 		//unsigned int		barrier;
 		atomic_t		barrier;
 
-		unsigned int		pending;
+		atomic_t		pending;
 		unsigned int		dispatch;
 		unsigned int 		complete;
 		unsigned int		error;
