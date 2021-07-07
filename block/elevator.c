@@ -387,7 +387,7 @@ void elv_dispatch_sort(struct request_queue *q, struct request *rq)
 				}
 				spin_unlock_irqrestore(&epoch->list_lock,flags);
 				if (!storage_epoch) {
-					printk(KERN_ERR "[STORAGE SCHEDULER] Immediate Return!\n");
+					printk(KERN_ERR "[STORAGE SCHEDULER] Critical Error, Immediate Return!\n");
 					return;
 				}
 				else if (storage_epoch->pending == 1 && storage_epoch->barrier) {

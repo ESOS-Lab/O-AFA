@@ -2601,25 +2601,25 @@ retry:
 		dev_t unit = inode->i_sb->s_dev;
 		struct mddev *mddev = mddev_find(unit);
 		if (mddev) {
-			if (!atomic_cmpxchg(&mddev->raid_epoch.barrier, 0, 1)) { /* Barrier Flag is not set */
-				spin_lock(&mddev->raid_epoch.epoch_lock);
+			spin_lock_irqsave(&mddev->raid_epoch.epoch_lock, flags);
+			if (mddev->raid_epoch.barrier == 0) { /* Barrier Flag is not set */
 				if (mddev->raid_epoch.pending) {
 					printk(KERN_INFO "[SWDEBUG] (%s) Barrier Enabled RAID Success!, RAID E_COUNT :%d\n",__func__,atomic_read(&mddev->raid_epoch.e_count));
+					mddev->raid_epoch.barrier = 1;
                                 	atomic_dec(&mddev->raid_epoch.e_count);
                                 	barrier();
 					BUG_ON(atomic_read(&mddev->raid_epoch.e_count) < 0);
                                 	// printk(KERN_INFO "[RAID SCHEDULER] (%s) RAID E_COUNT :%d\n",__func__,atomic_read(&mddev->raid_epoch.e_count));
-                                	spin_unlock(&mddev->raid_epoch.epoch_lock);
 				}
 				else {
                                 	printk(KERN_ERR "[SWDEBUG] (%s) Barrier Enabled RAID Fail!, RAID E_COUNT :%d\n",__func__,atomic_read(&mddev->raid_epoch.e_count));
                                 	barrier();
-					atomic_set(&mddev->raid_epoch.barrier, 0);
+					// atomic_set(&mddev->raid_epoch.barrier, 0);
                                 	BUG_ON(atomic_read(&mddev->raid_epoch.e_count) < 0);
-                                	spin_unlock(&mddev->raid_epoch.epoch_lock);
                                 	current->barrier_fail = 1;
 				}				
 			}
+                        spin_unlock_irqrestore(&mddev->raid_epoch.epoch_lock, flags);
 		}
 		else
 			blk_issue_barrier_plug(&plug);

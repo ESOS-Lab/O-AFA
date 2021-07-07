@@ -551,10 +551,15 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 	int i, k,disks = sh->disks;
 	unsigned long long barrier_disk_num = 0;
 	unsigned int cache_barrier_stripe = false;
-	unsigned long flags;
+	unsigned long flags, pending, barrier;
 
 	might_sleep();
-
+				
+	spin_lock_irqsave(&mddev->raid_epoch.epoch_lock, flags);
+	pending = mddev->raid_epoch.pending;
+	barrier = mddev->raid_epoch.barrier;
+	printk ("[RAID SCHEDULER] (%s) Pending : %d, Barrier : %d\n",__func__, pending, barrier);
+	spin_unlock_irqrestore(&mddev->raid_epoch.epoch_lock, flags);
 	for (i = disks; i--; ) {
 		unsigned long long rw;
 		int replace_only = 0;
@@ -584,22 +589,23 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 				}
 				if (i == sh->pd_idx)
 					count--;
-				spin_lock(&mddev->raid_epoch.epoch_lock);
-				printk(KERN_INFO "[RAID SCHEDULER] (%s) pending : %d, count :%d\n",__func__,mddev->raid_epoch.pending, count);
-				if (mddev->raid_epoch.pending == count && atomic_read(&mddev->raid_epoch.barrier) == 1) {
+				// spin_lock_irqsave(&mddev->raid_epoch.epoch_lock, flags);
+				printk(KERN_INFO "[RAID SCHEDULER] (%s) pending : %d, count :%d, barrier :%d\n",__func__, pending, count, barrier);
+				if (pending == count && barrier) {
 					rw |= REQ_BARRIER;
 					cache_barrier_stripe = true;
 					barrier_disk_num |= 1 << i;
 				}
-				spin_unlock(&mddev->raid_epoch.epoch_lock);
+				// spin_unlock_irqrestore(&mddev->raid_epoch.epoch_lock, flags);
 			}
 
-			spin_lock(&mddev->raid_epoch.epoch_lock);
+			spin_lock_irqsave(&mddev->raid_epoch.epoch_lock, flags);
 			if (i != sh->pd_idx && obi && test_bit(R5_OrderedIO, &sh->dev[i].flags)) {
+				pending--;
 				mddev->raid_epoch.pending--;
 				mddev->raid_epoch.dispatch++;
 			}
-			spin_unlock(&mddev->raid_epoch.epoch_lock);
+			spin_unlock_irqrestore(&mddev->raid_epoch.epoch_lock, flags);
 			
 		} else if (test_and_clear_bit(R5_Wantread, &sh->dev[i].flags))
 			rw = READ;
@@ -810,7 +816,7 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 			atomic_inc(&rdev->nr_pending);
 			atomic_inc(&mddev->raid_epoch.e_count);
 			atomic_set(&sh->dev[i].dispatch_flag, 0);
-			printk (KERN_INFO "[RAID SCHEDULER] (%s) Z_BARRIER Issue at Sector : %d, Disk Num : %d, E_Count :%d\n",__func__, sh->sector, i,atomic_read(&mddev->raid_epoch.e_count));
+			printk (KERN_INFO "[RAID SCHEDULER] (%s) Z_BARRIER Issue at Sector : %d, Disk Num : %d, Increased E_Count :%d\n",__func__, sh->sector, i,atomic_read(&mddev->raid_epoch.e_count));
 			generic_make_request(bi);
 			// bio_put(bi);
 		}
@@ -1297,7 +1303,7 @@ void raid_request_dispatched(struct request *req) /* SW Modified : Wake Up Page 
 	struct r5dev *dev;
 	struct mddev *mddev;
 	struct r5conf *conf;
-	unsigned long flags;
+	unsigned long flags, l_flags;
 
 	if (req->cmd_type != REQ_TYPE_FS)
 		return;
@@ -1398,7 +1404,9 @@ void raid_request_dispatched(struct request *req) /* SW Modified : Wake Up Page 
 	if (flags && atomic_read(&mddev->raid_epoch.enable) && atomic_read(&mddev->raid_epoch.e_count) == 0) 	{
 		// printk(KERN_INFO "[RAID_SCHEDULER] (%s) Wake up IO Waitqueue\n",__func__);
 		atomic_set(&mddev->raid_epoch.enable,0);
-		atomic_set(&mddev->raid_epoch.barrier,0);
+		spin_lock_irqsave(&mddev->raid_epoch.epoch_lock, l_flags);
+                mddev->raid_epoch.barrier = 0;
+		spin_unlock_irqrestore(&mddev->raid_epoch.epoch_lock, l_flags);
 		wake_up_all(&mddev->io_wait);
 		wake_up(&mddev->barrier_wait);
 		printk(KERN_INFO "[RAID SCHEDULER] (raid_request_dispatched) Finish Epoch!\n");
@@ -1466,6 +1474,7 @@ ops_run_biodrain(struct stripe_head *sh, struct dma_async_tx_descriptor *tx)
 			dev = &sh->dev[sh->pd_idx];
 			set_bit(R5_OrderedIO, &dev->flags);
 			atomic_inc(&mddev->raid_epoch.e_count);
+			printk("[RAID SCHEDULER] (%s) Increased E_Count : %d\n",__func__, atomic_read(&mddev->raid_epoch.e_count));
 			break;
 		}
 	}
@@ -2120,7 +2129,7 @@ static void raid5_end_write_request(struct bio *bi, int error)
 	int replacement = 0;
 	struct bio *wbi = NULL;
 	struct r5dev *dev;
-	unsigned long flags;
+	unsigned long flags, l_flags;
         struct list_head *ptr, *ptrn;
 	struct stroage_epoch *storage_epoch;
 
@@ -2167,7 +2176,9 @@ static void raid5_end_write_request(struct bio *bi, int error)
 
         	if (flags && atomic_read(&mddev->raid_epoch.enable) == 1 && atomic_read(&mddev->raid_epoch.e_count) == 0){
         	        atomic_set(&mddev->raid_epoch.enable,0);
-                	atomic_set(&mddev->raid_epoch.barrier,0);
+			spin_lock_irqsave(&mddev->raid_epoch.epoch_lock, l_flags);
+                	mddev->raid_epoch.barrier = 0;
+			spin_unlock_irqrestore(&mddev->raid_epoch.epoch_lock, l_flags);
                 	wake_up_all(&mddev->io_wait);
                 	wake_up(&mddev->barrier_wait);
 			printk(KERN_INFO "[RAID SCHEDULER] (%s) Finish Epoch!\n",__func__);
@@ -2288,7 +2299,9 @@ static void raid5_end_write_request(struct bio *bi, int error)
 
 	if (flags && atomic_read(&mddev->raid_epoch.enable) == 1 && atomic_read(&mddev->raid_epoch.e_count) == 0){ 
 		atomic_set(&mddev->raid_epoch.enable,0);
-		atomic_set(&mddev->raid_epoch.barrier,0);
+		spin_lock_irqsave(&mddev->raid_epoch.epoch_lock, l_flags);
+                mddev->raid_epoch.barrier = 0;
+		spin_unlock_irqrestore(&mddev->raid_epoch.epoch_lock, l_flags);
 		wake_up_all(&mddev->io_wait);
 		wake_up(&mddev->barrier_wait);
 		printk(KERN_INFO "[RAID SCHEDULER] (%s) Finish Epoch!\n",__func__);
@@ -4704,14 +4717,26 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 	unsigned int pending = 0;
 
         if (bi->bi_rw & REQ_BARRIER) {
-                wait_event(mddev->barrier_wait,
-                                !atomic_cmpxchg(&mddev->raid_epoch.barrier, 0, 1));
-                if (!atomic_read(&mddev->raid_epoch.barrier))
-                        printk (KERN_ERR "[RAID_SCHEDULER] (%s) Barrier is Disabled?\n",__func__);
+		spin_lock_irq(&mddev->raid_epoch.epoch_lock);
+                wait_event_lock_irq(mddev->barrier_wait,
+                                mddev->raid_epoch.barrier == 0,
+				mddev->raid_epoch.epoch_lock);
+		mddev->raid_epoch.barrier = 1;
+		mddev->raid_epoch.pending++;
+		printk (KERN_INFO "[RAID SCHEDULER] (%s) Pending : %d\n",__func__, mddev->raid_epoch.pending);
+		spin_unlock_irq(&mddev->raid_epoch.epoch_lock);
+                // if (!atomic_read(&mddev->raid_epoch.barrier))
+                //        printk (KERN_ERR "[RAID_SCHEDULER] (%s) Barrier is Disabled?\n",__func__);
         }
         else {
-                wait_event(mddev->barrier_wait,
-                                !atomic_read(&mddev->raid_epoch.barrier));
+		spin_lock_irq(&mddev->raid_epoch.epoch_lock);
+                wait_event_lock_irq(mddev->barrier_wait,
+                                mddev->raid_epoch.barrier == 0,
+				mddev->raid_epoch.epoch_lock);
+		if (bi->bi_rw & REQ_ORDERED)
+			mddev->raid_epoch.pending++;
+		printk (KERN_INFO "[RAID SCHEDULER] (%s) Pending : %d\n",__func__, mddev->raid_epoch.pending);
+		spin_unlock_irq(&mddev->raid_epoch.epoch_lock);
         }
 
 	if (unlikely(bi->bi_rw & REQ_FLUSH)) {
@@ -4832,36 +4857,33 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 				schedule();
 				goto retry;
 			}
+			finish_wait(&conf->wait_for_overlap, &w);
 
         		/* SW Modified */
         		if (bi->bi_rw & REQ_ORDERED) {
-                		spin_lock(&mddev->raid_epoch.epoch_lock);
+				unsigned long flags;
+                		spin_lock_irqsave(&mddev->raid_epoch.epoch_lock, flags);
                 		if (!atomic_cmpxchg(&mddev->raid_epoch.enable, 0, 1)) { /* Raid Epoch Start! */
-                        		mddev->raid_epoch.pending = 0;
                         		mddev->raid_epoch.dispatch = 0;
                         		mddev->raid_epoch.complete = 0;
                         		atomic_inc(&mddev->raid_epoch.e_count);
                         		printk(KERN_INFO "[RAID SCHEDULER] (%s) Epoch Start! bio:%x, S_Secotr:%d, Disk_Idx:%d, RAID E_COUNT :%d BARRIER :%d\n",__func__, bi, sh->sector, dd_idx, atomic_read(&mddev->raid_epoch.e_count), !!(bi->bi_rw & REQ_BARRIER));
                 		}
-                		mddev->raid_epoch.pending++;
                 		atomic_inc(&mddev->raid_epoch.e_count);
                 		if (bi->bi_rw & REQ_BARRIER) { /* Raid Epoch Finish! */
-                        		if (!atomic_read(&mddev->raid_epoch.barrier)) {
+                        		if (!mddev->raid_epoch.barrier) {
                                 		printk(KERN_ERR "[RAID SCHEDULER] (%s) Epoch Count :%d\n",__func__, atomic_read(&mddev->raid_epoch.e_count));
                                 		printk(KERN_ERR "[RAID SCHEDULER] (%s) Barrier is Disabled\n",__func__);
                         		}		
-                        	atomic_dec(&mddev->raid_epoch.e_count);
+                        		atomic_dec(&mddev->raid_epoch.e_count);
                         		if (atomic_read(&mddev->raid_epoch.e_count) <= 0)
                                 		printk(KERN_ERR "[RAID SCHEDULER] (%s) Epoch Count :%d\n",__func__, atomic_read(&mddev->raid_epoch.e_count));
                                 		printk(KERN_INFO "[RAID SCHEDULER] (%s) Epoch Finish! bio:%x, S_Secotr:%d, Disk_Idx:%d, RAID E_COUNT :%d BARRIER :%d\n",__func__, bi, sh->sector, dd_idx, atomic_read(&mddev->raid_epoch.e_count), !!(bi->bi_rw & REQ_BARRIER));
                         	}
-                		spin_unlock(&mddev->raid_epoch.epoch_lock);
-                		printk(KERN_INFO "[RAID SCHEDULER] (%s) bio:%x, S_Secotr:%d, Disk_Idx:%d, RAID E_COUNT :%d BARRIER :%d\n",__func__, bi, sh->sector, dd_idx, atomic_read(&mddev->raid_epoch.e_count), !!(bi->bi_rw & REQ_BARRIER));
+                		printk(KERN_INFO "[RAID SCHEDULER] (%s) bio:%x, S_Secotr:%d, Disk_Idx:%d, RAID E_COUNT :%d BARRIER :%d Pending :%d\n",__func__, bi, sh->sector, dd_idx, atomic_read(&mddev->raid_epoch.e_count), !!(bi->bi_rw & REQ_BARRIER), mddev->raid_epoch.pending);
+                		spin_unlock_irqrestore(&mddev->raid_epoch.epoch_lock, flags);
        			}
 
-
-
-			finish_wait(&conf->wait_for_overlap, &w);
 			set_bit(STRIPE_HANDLE, &sh->state);
 			clear_bit(STRIPE_DELAYED, &sh->state);
 			
