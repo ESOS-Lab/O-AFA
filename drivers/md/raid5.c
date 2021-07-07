@@ -558,7 +558,7 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 	spin_lock_irqsave(&mddev->raid_epoch.epoch_lock, flags);
 	pending = mddev->raid_epoch.pending;
 	barrier = mddev->raid_epoch.barrier;
-	printk ("[RAID SCHEDULER] (%s) Pending : %d, Barrier : %d\n",__func__, pending, barrier);
+	//printk ("[RAID SCHEDULER] (%s) Pending : %d, Barrier : %d\n",__func__, pending, barrier);
 	spin_unlock_irqrestore(&mddev->raid_epoch.epoch_lock, flags);
 	for (i = disks; i--; ) {
 		unsigned long long rw;
