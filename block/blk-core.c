@@ -1552,28 +1552,12 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 		goto get_rq;
 	}
 
-	/*
-        if (bio->raid_dispatch && !(bio->bi_rw & REQ_ORDERED)) {
-                sh = bio->bi_private;
-                printk (KERN_INFO "[STORAGE SCHEDULER] (%s) NO ORDERED! STRIPE SECTOR:%d, disk_idx:%d\n", __func__, sh->sector, bio->raid_disk_num);
-        }
-	*/
-
-
 	/* UFS */
 	if (bio->bi_rw & REQ_ORDERED) {
-		if (!atomic_cmpxchg(&current->epoch_enable, 0, 1)) {
-			blk_start_epoch(q);
-			if (bio->raid_dispatch)
-				printk (KERN_INFO "[STORAGE SCHEDULER] (%s) Start Epoch! Whole Epoch Addr : %x, Whole Epoch Count :%d\n",__func__,current->__epoch,atomic_read(&current->__epoch->e_count));
-		}
-		get_epoch(current->__epoch);
-		epoch = current->__epoch;
-		
 		/* Critical Section Protection */
-		spin_lock_irqsave(&epoch->list_lock, flags);
+		spin_lock_irqsave(&current->list_lock, flags);
 		/* SW Modified */
-		list_for_each(ptr, &epoch->storage_list) {
+		list_for_each(ptr, &current->storage_list) {
 			storage_epoch = list_entry(ptr, struct storage_epoch, list);
 			if (storage_epoch->q == q) {
 				find = 1;
@@ -1581,51 +1565,54 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 			}
 		}
 		
-		spin_unlock_irqrestore(&epoch->list_lock, flags);
+		spin_unlock_irqrestore(&current->list_lock, flags);
 	
 		if (!find) {
-			get_epoch(epoch);
 			storage_epoch = kmalloc(sizeof(struct storage_epoch),GFP_KERNEL);
 			memset(storage_epoch, 0, sizeof(struct storage_epoch));
+			storage_epoch->task = current;
 			storage_epoch->q = q;
 			
 			storage_epoch->pending = 0;
 			storage_epoch->dispatch = 0;
 			storage_epoch->complete = 0;
 			storage_epoch->barrier = 0;
-		
-			spin_lock_irqsave(&epoch->list_lock, flags);
+
+			spin_lock_init(&storage_epoch->s_e_lock);		
+			atomic_set(&storage_epoch->s_e_count , 0);
 			INIT_LIST_HEAD(&storage_epoch->list);
-			list_add_tail(&storage_epoch->list, &epoch->storage_list);
-			spin_unlock_irqrestore(&epoch->list_lock, flags);
+
+			spin_lock_irqsave(&current->list_lock, flags);
+			list_add_tail(&storage_epoch->list, &current->storage_list);
+			spin_unlock_irqrestore(&current->list_lock, flags);
+		
+			atomic_inc(&storage_epoch->s_e_count);
+
 			if (bio->raid_dispatch)
 				printk(KERN_INFO "[STORAGE SCHEDULER] (%s) Start Storage Epoch Request, Disk idx : %d\n",__func__,bio->raid_disk_num);	
 		}
 
-		spin_lock_irqsave(&epoch->list_lock, flags);
-		bio->bi_epoch = epoch;
-		bio->bi_epoch->pending++;
+		atomic_inc(&storage_epoch->s_e_count);
+
+		spin_lock_irqsave(&storage_epoch->s_e_lock, flags);
+		bio->storage_epoch = storage_epoch;
 		storage_epoch->pending++;
 		if (bio->raid_dispatch && storage_epoch->barrier && bio->bi_rw & REQ_ORDERED)
 			printk(KERN_ERR "[STORAGE SCHEDULER] (%s) block I/O after Barrier Request! to the Disk %d\n",__func__,bio->raid_disk_num);
 		
-		spin_unlock_irqrestore(&epoch->list_lock, flags);
+		if (bio->bi_rw & REQ_BARRIER) {
+			storage_epoch->barrier = 1;
+			atomic_dec(&storage_epoch->s_e_count);
+			if (bio->raid_dispatch)
+				printk(KERN_INFO "[STORAGE SCHEDULER] (%s) Finish Storage Epoch Request, Disk idx : %d, E_Count : %d\n",__func__,bio->raid_disk_num,atomic_read(&storage_epoch->s_e_count));	
+		}
 		
 		if (bio->raid_dispatch) {
 			sh = bio->bi_private;
-			printk (KERN_INFO "[STORAGE SCHEDULER] (%s) # of Pending:%d, STRIPE SECTOR:%d, disk_idx:%d, E_Count :%d\n", __func__,storage_epoch->pending, sh->sector, bio->raid_disk_num, atomic_read(&epoch->e_count));
+			printk (KERN_INFO "[STORAGE SCHEDULER] (%s)  # of Pending:%d, STRIPE SECTOR:%d, disk_idx:%d, E_Count :%d\n", 
+				__func__,storage_epoch->pending, sh->sector, bio->raid_disk_num, atomic_read(&storage_epoch->s_e_count));
 		}
-
-		if (bio->bi_rw & REQ_BARRIER) {
-			blk_finish_epoch(0);
-			put_epoch(epoch);
-			storage_epoch->barrier = 1;
-			if (bio->raid_dispatch)
-				printk(KERN_INFO "[STORAGE SCHEDULER] (%s) Finish Storage Epoch Request, Disk idx : %d, E_Count : %d\n",__func__,bio->raid_disk_num,atomic_read(&epoch->e_count));	
-			if (atomic_read(&epoch->e_count) < 0)
-				printk(KERN_ERR "[STORAGE SCHEDULER] (%s) Epoch count becomes negative! %d\n",__func__,atomic_read(&epoch->e_count));
-		}
-		
+		spin_unlock_irqrestore(&storage_epoch->s_e_lock, flags);
 	}
 
 	/*
@@ -3215,10 +3202,7 @@ EXPORT_SYMBOL(blk_finish_plug);
 /* UFS blk functions */
 void blk_issue_barrier_plug(struct blk_plug *plug)
 {
-	if (current->__epoch)
-		blk_finish_epoch(1);
-	else
-		current->barrier_fail = 1;
+	blk_finish_epoch(1);
 }
 EXPORT_SYMBOL(blk_issue_barrier_plug);
 
@@ -3255,28 +3239,34 @@ void blk_request_dispatched(struct request *req)
 		}
 
 		if (req->cmd_bflags & REQ_ORDERED && !atomic_cmpxchg(&bio->dispatch_check,0,1)) {
-			if (bio->bi_epoch) {
-				struct epoch *epoch;
-				epoch = bio->bi_epoch;
-				epoch->complete++;
-				/* SW Modified : I think storage_epoch->complete need not be tracked */
-				put_epoch(epoch);
+			if (bio->storage_epoch) {
+				struct storage_epoch *storage_epoch;
+				storage_epoch = bio->storage_epoch;
+				atomic_dec(&storage_epoch->s_e_count);
 				if (bio->raid_dispatch)
-					printk(KERN_INFO "[STORAGE SCHEDULER] (%s) E_Count : %d, S_Secotr:%d, Disk_Idx:%d\n",__func__, atomic_read(&epoch->e_count), sh->sector, bio->raid_disk_num);
+					printk(KERN_INFO "[STORAGE SCHEDULER] (%s) E_Count : %d, S_Secotr:%d, Disk_Idx:%d\n",
+						__func__, atomic_read(&storage_epoch->s_e_count), sh->sector, bio->raid_disk_num);
 
-				if (atomic_read(&epoch->e_count) == 0) {
+				if (atomic_read(&storage_epoch->s_e_count) < 0)
+					printk(KERN_ERR "[STORAGE SCHEDULER] (%s) Critical Error at E_Count : %d!\n",__func__,atomic_read(&storage_epoch->s_e_count));			
+
+				if (atomic_read(&storage_epoch->s_e_count) == 0) {
 					/* SW Modified */
-					spin_lock_irqsave(&epoch->list_lock, flags);
-					list_for_each_safe(ptr, ptrn, &epoch->storage_list) {
-						storage_epoch = list_entry(ptr, struct storage_epoch, list);
-						list_del(ptr);
-						kfree(storage_epoch);
-					}
-					spin_unlock_irqrestore(&epoch->list_lock, flags);
-					atomic_set(&epoch->task->epoch_enable, 0);
+					struct task_struct *task = storage_epoch->task;
+					struct storage_epoch *storage_epoch_element;
+                			spin_lock_irqsave(&task->list_lock, flags);
+                			list_for_each_safe(ptr, ptrn, &task->storage_list) {
+                        			storage_epoch_element = list_entry(ptr, struct storage_epoch, list);
+                        			if (storage_epoch_element == storage_epoch) {
+							list_del(ptr);
+							kfree(storage_epoch);
+                               				break;
+                        			}
+                			}
+                			spin_unlock_irqrestore(&task->list_lock, flags);
+
 					if (bio->raid_dispatch)
-						printk (KERN_INFO "[STORAGE SCHEDULER] (%s) Epoch Pool is freed!\n",__func__);
-					mempool_free(epoch, epoch->q->epoch_pool);
+						printk (KERN_INFO "[STORAGE SCHEDULER] (%s) Storage Epoch %d is Freed!\n",__func__,bio->raid_disk_num);
 				}
 			}
 		}
@@ -3304,6 +3294,7 @@ EXPORT_SYMBOL(blk_request_dispatched);
 
 void blk_start_new_epoch(struct request_queue *q)
 {
+	/*
 	struct epoch *epoch = current->epoch;
 
 	if (!epoch) {
@@ -3326,17 +3317,19 @@ void blk_start_new_epoch(struct request_queue *q)
 	epoch->error_flags = 0;
 
 	current->epoch = epoch;	
+	*/
 }
 EXPORT_SYMBOL(blk_start_new_epoch);
 
 void blk_start_epoch(struct request_queue *q)
 {
-	struct epoch *epoch = current->__epoch;
+	// struct epoch *epoch = current->__epoch;
 
 	// if (epoch) {
 	//  printk(KERN_ERR "UFS: %s: unfinished epoch!\n", __func__);
 	//  return;
 	// }
+	/*
 	epoch = mempool_alloc(q->epoch_pool, GFP_NOFS);	
 	
 	if (!epoch) {
@@ -3345,6 +3338,9 @@ void blk_start_epoch(struct request_queue *q)
 	}
 	memset(epoch, 0, sizeof(struct epoch));
 	epoch->task = current;
+	printk (KERN_INFO "[STORAGE SCHEDULER] (%s) epoch->task :%x\n",__func__, epoch->task);
+	if (!epoch->task)
+		printk (KERN_ERR "[STORAGE SCHEDULER] (%s) Critical Errror ! epoch->task :%x\n",__func__, epoch->task);
 	epoch->q = q;
 
 	epoch->barrier = 0;
@@ -3353,15 +3349,15 @@ void blk_start_epoch(struct request_queue *q)
 	epoch->complete = 0;
 	epoch->error = 0;
 	epoch->error_flags = 0;
-
+	*/
 	/* SW Modified */
-	INIT_LIST_HEAD(&epoch->storage_list);
-	spin_lock_init(&epoch->list_lock);
+	//INIT_LIST_HEAD(&epoch->storage_list);
+	//spin_lock_init(&epoch->list_lock);
 	// atomic_set(&epoch->enable, 0);
 
 	// get_epoch(epoch);
 
-	current->__epoch = epoch;	
+	//current->__epoch = epoch;	
 
 
 }
@@ -3369,46 +3365,30 @@ EXPORT_SYMBOL(blk_start_epoch);
 
 void blk_finish_epoch(int enable)
 {
-	struct epoch *epoch = current->__epoch;
+	// struct epoch *epoch = current->__epoch;
 	/* SW Modified */
 	struct storage_epoch *storage_epoch;
 	struct list_head *ptr, *ptrn;
 	unsigned long flags;
 
-	if (!epoch) {
+	spin_lock_irqsave(&current->list_lock, flags);
+	list_for_each(ptr, &current->storage_list) {
+		storage_epoch = list_entry(ptr, struct storage_epoch, list);
+		atomic_dec(&storage_epoch->s_e_count);
+		if (storage_epoch->pending) {
+			storage_epoch->barrier = 1;
+		}
+		else
+			storage_epoch->task->barrier_fail = 1;
+		if (atomic_read(&storage_epoch->s_e_count) == 0)
+			printk (KERN_ERR "[STORAGE SCHEDULER] (%s) Corner Case Occur!\n",__func__);
+	}
+	spin_unlock_irqrestore(&current->list_lock, flags);
+
+	if (!storage_epoch) {
 	        printk(KERN_ERR "UFS: %s: unstarted epoch!\n", __func__);
 		return;
 	}	
-	if (epoch->pending == 0) {
-	  epoch->task->barrier_fail = 1;
-	}
-	else {
-		epoch->barrier = 1;
-		/* SW Modified */
-		if (enable) {
-			spin_lock_irqsave(&epoch->list_lock, flags);
-			list_for_each(ptr, &epoch->storage_list) {
-	  			storage_epoch = list_entry(ptr, struct storage_epoch, list);
-				storage_epoch->barrier = 1;
-			}
-			spin_unlock_irqrestore(&epoch->list_lock, flags);
-		}
-	}
-
-	// current->__epoch = 0;	
-	// put_epoch(epoch);
-	if (atomic_read(&epoch->e_count) == 0) {
-		/* SW Modified */
-		printk (KERN_ERR "[SWDEBUG] (%s) Corner Case Occur, How this function evokes finish epoch?\n",__func__);
-		spin_lock_irqsave(&epoch->list_lock, flags);
-		list_for_each_safe(ptr, ptrn, &epoch->storage_list) {
-			storage_epoch = list_entry(ptr, struct storage_epoch, list);
-			list_del(ptr);
-			kfree(storage_epoch);
-		}
-		mempool_free(epoch, epoch->q->epoch_pool);
-		spin_unlock_irqrestore(&epoch->list_lock, flags);
-	}
 }
 EXPORT_SYMBOL(blk_finish_epoch);
 

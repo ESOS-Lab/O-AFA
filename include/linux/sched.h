@@ -66,6 +66,7 @@ struct blk_plug;
 /* SW Modified */
 struct storage_epoch {
 
+	struct task_struct *task;
 	struct request_queue *q;
 
 	unsigned int barrier;
@@ -77,6 +78,7 @@ struct storage_epoch {
 	unsigned int error_flags;
 
 	atomic_t s_e_count;
+	spinlock_t s_e_lock;
 
 	struct list_head list;
 };
@@ -1468,11 +1470,13 @@ struct task_struct {
 	unsigned int	sequential_io_avg;
 #endif
 	/* UFS: epoch structure for task */
-	struct epoch *epoch;
-        struct epoch *__epoch;
+	struct list_head storage_list;
+	spinlock_t list_lock;
+	// struct epoch *epoch;
+        // struct epoch *__epoch;
 	unsigned int barrier_fail;
 	unsigned int epoch_fail;
-	atomic_t epoch_enable;
+	// atomic_t epoch_enable;
 	//struct list_head epoch_pending;
 	//struct list_head epoch_dispatch;
 	//struct list_head epoch_complte;

@@ -356,8 +356,6 @@ void elv_dispatch_sort(struct request_queue *q, struct request *rq)
 	struct list_head *entry;
 	long long stop_flags; /* UFS modification to support REQ_BARRIER and REQ_ORDERED */
 	/* SW Modified */
-	struct storage_epoch *storage_epoch;
-	struct list_head *ptr;
 	struct stripe_head *sh;
 	unsigned long flags;
 
@@ -370,50 +368,30 @@ void elv_dispatch_sort(struct request_queue *q, struct request *rq)
 
 	boundary = q->end_sector;
 	stop_flags = REQ_SOFTBARRIER | REQ_STARTED;
-	storage_epoch = NULL;
 
 	if (rq->cmd_bflags & REQ_ORDERED) {
 		struct bio *req_bio;
 		req_bio = rq->bio;
 		while (req_bio) {
 			struct bio *bio = req_bio;
-			if (bio->bi_epoch) {
-				struct epoch *epoch = bio->bi_epoch;
-				spin_lock_irqsave(&epoch->list_lock,flags);
-				list_for_each(ptr, &epoch->storage_list) {
-					storage_epoch = list_entry(ptr, struct storage_epoch, list);
-					if (storage_epoch->q == q)
-						break;
+			if (bio->storage_epoch) {
+				struct storage_epoch *storage_epoch = bio->storage_epoch;
+				spin_lock_irqsave(&storage_epoch->s_e_lock,flags);
+				if (storage_epoch->q != q) {
+					printk (KERN_ERR "[STORAGE SCHEDULER] (%s) Request Queue is Not Matched!, Disk Idx :%d\n"
+						,__func__, bio->raid_disk_num);
+					break;
 				}
-				spin_unlock_irqrestore(&epoch->list_lock,flags);
-				if (!storage_epoch) {
-					printk(KERN_ERR "[STORAGE SCHEDULER] Critical Error, Immediate Return!\n");
-					return;
-				}
-				else if (storage_epoch->pending == 1 && storage_epoch->barrier) {
+				if (storage_epoch->pending == 1 && storage_epoch->barrier) {
 					rq->cmd_bflags |= REQ_BARRIER;
-					if (bio->raid_dispatch) {
-						sh = req_bio->bi_private;
-						printk (KERN_INFO "[STORAGE SCHEDULER] (%s) E_count : %d BARRIER BIO: Stripe Sector:%d Disk Idx:%d\n",__func__, atomic_read(&epoch->e_count), sh->sector,req_bio->raid_disk_num);
-					}
 				}
-				else {
-					if (bio->raid_dispatch) {
-						sh = req_bio->bi_private;
-						printk (KERN_INFO "[STORAGE SCHEDULER] (%s) E_count : %d ORDERED BIO: Stripe Sector:%d Disk Idx:%d\n",__func__, atomic_read(&epoch->e_count), sh->sector,req_bio->raid_disk_num);
-					}
-				}	
-				/* SW Modified - Wrong Condition at Storgae Scheduler
-				if (epoch->pending == 1 && epoch->barrier) {
-					rq->cmd_bflags |= REQ_BARRIER;			  
+				if (bio->raid_dispatch) {
+					sh = bio->bi_private;
+					printk (KERN_INFO "[STORAGE SCHEDULER] (%s) E_count : %d BARRIER BIO: Stripe Sector:%d Disk Idx:%d\n",
+						__func__, atomic_read(&storage_epoch->s_e_count), sh->sector,bio->raid_disk_num);
 				}
-				*/
-				spin_lock_irqsave(&epoch->list_lock,flags);
 				storage_epoch->pending--;
-				storage_epoch->dispatch++;
-				epoch->pending--;
-				epoch->dispatch++;
-				spin_unlock_irqrestore(&epoch->list_lock,flags);
+				spin_unlock_irqrestore(&storage_epoch->s_e_lock,flags);
 
 			}
 			req_bio = bio->bi_next;

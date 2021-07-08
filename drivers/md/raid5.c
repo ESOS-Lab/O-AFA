@@ -1424,7 +1424,6 @@ ops_run_biodrain(struct stripe_head *sh, struct dma_async_tx_descriptor *tx)
 {
 	int disks = sh->disks;
 	int i;
-	unsigned long count = 0;
 	struct mddev *mddev;
 
 	mddev = sh->raid_conf->mddev; 
@@ -2134,26 +2133,32 @@ static void raid5_end_write_request(struct bio *bi, int error)
 	struct stroage_epoch *storage_epoch;
 
 	flags = false;
-	if (bi->bi_epoch && !atomic_cmpxchg(&bi->dispatch_check,0,1)) {
-        	struct epoch *epoch;
-                epoch = bi->bi_epoch;
-                epoch->complete++;
-                /* SW Modified : I think storage_epoch->complete need not be tracked */
-                put_epoch(epoch);
-                printk(KERN_INFO "[STORAGE SCHEDULER] (%s) E_Count : %d, S_Secotr:%d, Disk_Idx:%d\n",__func__, atomic_read(&epoch->e_count), sh->sector, bi->raid_disk_num);
-                if (atomic_read(&epoch->e_count) == 0) {
-                        /* SW Modified */
-                        spin_lock_irqsave(&epoch->list_lock, flags);
-                        list_for_each_safe(ptr, ptrn, &epoch->storage_list) {
-                                storage_epoch = list_entry(ptr, struct storage_epoch, list);
-                                list_del(ptr);
-                                kfree(storage_epoch);
-                        }
-                        spin_unlock_irqrestore(&epoch->list_lock, flags);
-                        atomic_set(&epoch->task->epoch_enable, 0);
-                        printk (KERN_INFO "[STORAGE SCHEDULER] (%s) Epoch Pool is freed!\n",__func__);
-                        mempool_free(epoch, epoch->q->epoch_pool);
-                }
+	if (bi->storage_epoch && !atomic_cmpxchg(&bi->dispatch_check,0,1)) {
+        	struct storage_epoch *storage_epoch;
+                storage_epoch = bi->storage_epoch;
+                atomic_dec(&storage_epoch->s_e_count);
+                printk(KERN_INFO "[STORAGE SCHEDULER] (%s) E_Count : %d, S_Secotr:%d, Disk_Idx:%d\n",
+                	__func__, atomic_read(&storage_epoch->s_e_count), sh->sector, bi->raid_disk_num);
+
+                if (atomic_read(&storage_epoch->s_e_count) < 0)
+                	printk(KERN_ERR "[STORAGE SCHEDULER] (%s) Critical Error at E_Count : %d!\n",__func__,atomic_read(&storage_epoch->s_e_count));
+
+                if (atomic_read(&storage_epoch->s_e_count) == 0) {
+                	/* SW Modified */
+                        struct task_struct *task = storage_epoch->task;
+                        spin_lock_irqsave(&task->list_lock, flags);
+                        list_for_each_safe(ptr, ptrn, &task->storage_list) {
+				struct storage_epoch *storage_epoch_element;
+                        	storage_epoch_element = list_entry(ptr, struct storage_epoch, list);
+                                if (storage_epoch_element == storage_epoch) {
+                                	list_del(ptr);
+					kfree(storage_epoch);
+                                        break;
+                                }
+                  	}
+                        spin_unlock_irqrestore(&task->list_lock, flags);
+                        printk (KERN_INFO "[STORAGE SCHEDULER] (%s) Storage Epoch %d is Freed!\n",__func__,bi->raid_disk_num);
+                 }
         }
 
 	if (!bi->bi_phys_segments && bi->bi_rw & WRITE_BARRIER) {
@@ -2791,11 +2796,6 @@ schedule_reconstruction(struct stripe_head *sh, struct stripe_head_state *s,
 		s->locked, s->ops_request);
 }
 
-static int check_condition(struct mddev *mddev) 
-{
-
-}
-
 /*
  * Each stripe/dev can have one or more bion attached.
  * toread/towrite point to the first in a chain.
@@ -3185,8 +3185,6 @@ static void handle_stripe_clean_event(struct r5conf *conf,
 	int i;
 	struct r5dev *dev;
 	int discard_pending = 0;
-	unsigned long flags = false;
-	struct mddev *mddev = conf->mddev;
 
 	for (i = disks; i--; )
 		if (sh->dev[i].written) {
@@ -4713,8 +4711,6 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 	struct stripe_head *sh;
 	const int rw = bio_data_dir(bi);
 	int remaining;
-	unsigned long flags;
-	unsigned int pending = 0;
 
         if (bi->bi_rw & REQ_BARRIER) {
 		spin_lock_irq(&mddev->raid_epoch.epoch_lock);
@@ -4733,9 +4729,10 @@ static void make_request(struct mddev *mddev, struct bio * bi)
                 wait_event_lock_irq(mddev->barrier_wait,
                                 mddev->raid_epoch.barrier == 0,
 				mddev->raid_epoch.epoch_lock);
-		if (bi->bi_rw & REQ_ORDERED)
+		if (bi->bi_rw & REQ_ORDERED) {
 			mddev->raid_epoch.pending++;
-		printk (KERN_INFO "[RAID SCHEDULER] (%s) Pending : %d\n",__func__, mddev->raid_epoch.pending);
+			printk (KERN_INFO "[RAID SCHEDULER] (%s) Pending : %d\n",__func__, mddev->raid_epoch.pending);
+		}
 		spin_unlock_irq(&mddev->raid_epoch.epoch_lock);
         }
 
