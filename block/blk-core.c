@@ -1532,7 +1532,6 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 	unsigned long flags;
 
 	struct stripe_head *sh;
-	struct epoch *epoch;
 
 	/*
 	 * low level driver can indicate that it wants pages above a
@@ -1570,6 +1569,10 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 		if (!find) {
 			storage_epoch = kmalloc(sizeof(struct storage_epoch),GFP_KERNEL);
 			memset(storage_epoch, 0, sizeof(struct storage_epoch));
+			if (!current) {
+				printk(KERN_ERR "[STORAGE SCHEDULER] (%s) Cannot Store addr of task struct",__func__);
+				return;
+			}
 			storage_epoch->task = current;
 			storage_epoch->q = q;
 			
@@ -3212,7 +3215,6 @@ void blk_request_dispatched(struct request *req)
 	struct bio *req_bio;
 	/* SW Modified */
 	struct list_head *ptr, *ptrn;
-	struct storage_epoch *storage_epoch;
 	struct stripe_head *sh;
 	struct r5dev *dev;
 	unsigned long flags;
@@ -3367,8 +3369,8 @@ void blk_finish_epoch(int enable)
 {
 	// struct epoch *epoch = current->__epoch;
 	/* SW Modified */
-	struct storage_epoch *storage_epoch;
-	struct list_head *ptr, *ptrn;
+	struct storage_epoch *storage_epoch = NULL;
+	struct list_head *ptr; //, *ptrn;
 	unsigned long flags;
 
 	spin_lock_irqsave(&current->list_lock, flags);

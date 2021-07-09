@@ -812,6 +812,7 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 			bi->raid_disk_num = i;
 			bi->bi_end_io = raid5_end_write_request;
 			bio_get(bi);
+			atomic_set(&bi->dispatch_check, 0);
 			// set_bit(R5_LOCKED, &sh->dev[i].flags)
 			atomic_inc(&rdev->nr_pending);
 			atomic_inc(&mddev->raid_epoch.e_count);
@@ -1438,8 +1439,6 @@ ops_run_biodrain(struct stripe_head *sh, struct dma_async_tx_descriptor *tx)
 
 		if (test_and_clear_bit(R5_Wantdrain, &dev->flags)) {
 			struct bio *wbi;
-
-			// printk("[RAID SCHEDULER] (%s) Sector: %d Disk Idx : %d\n",__func__,sh->sector,i);
 			
 			spin_lock_irq(&sh->stripe_lock);
 			chosen = dev->towrite;
@@ -2146,6 +2145,11 @@ static void raid5_end_write_request(struct bio *bi, int error)
                 if (atomic_read(&storage_epoch->s_e_count) == 0) {
                 	/* SW Modified */
                         struct task_struct *task = storage_epoch->task;
+			if (!task) {
+                		printk(KERN_ERR "[STORAGE SCHEDULER] (%s) Task is NULL! E_Count : %d, S_Secotr:%d, Disk_Idx:%d Phys_Segments : %d\n",
+                			__func__, atomic_read(&storage_epoch->s_e_count), sh->sector, bi->raid_disk_num, bi->bi_phys_segments);
+				return;
+			}
                         spin_lock_irqsave(&task->list_lock, flags);
                         list_for_each_safe(ptr, ptrn, &task->storage_list) {
 				struct storage_epoch *storage_epoch_element;
