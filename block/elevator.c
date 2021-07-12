@@ -387,8 +387,7 @@ void elv_dispatch_sort(struct request_queue *q, struct request *rq)
 				}
 				if (bio->raid_dispatch) {
 					sh = bio->bi_private;
-					printk (KERN_INFO "[STORAGE SCHEDULER] (%s) E_count : %d BARRIER BIO: Stripe Sector:%d Disk Idx:%d\n",
-						__func__, atomic_read(&storage_epoch->s_e_count), sh->sector,bio->raid_disk_num);
+					printk (KERN_INFO "[STORAGE SCHEDULER] (%s) E_count : %d BARRIER BIO: Stripe Sector:%d Disk Idx:%d\n",__func__, atomic_read(&storage_epoch->s_e_count), sh->sector,bio->raid_disk_num);
 				}
 				storage_epoch->pending--;
 				spin_unlock_irqrestore(&storage_epoch->s_e_lock,flags);
