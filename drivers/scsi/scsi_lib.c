@@ -1643,13 +1643,13 @@ static void scsi_request_fn(struct request_queue *q)
 		
 		spin_lock_irq(q->queue_lock);
 		if (rtn) {
-			printk(KERN_ERR "[SWDEBUG] (%s) Dispatch Failed\n",__func__);
+			// printk(KERN_ERR "[SWDEBUG] (%s) Dispatch Failed\n",__func__);
 			struct bio *req_bio;
 			struct stripe_head *sh;
 			req_bio = req->bio;
 			if (req_bio && req_bio->raid_dispatch) {
 				sh = req_bio->bi_private;
-				printk(KERN_ERR "[SWDEBUG] (%s:Failed) Stripe Sector : %d Disk Idx %d\n",__func__,sh->sector,req_bio->raid_disk_num);
+				// printk(KERN_ERR "[SWDEBUG] (%s:Failed) Stripe Sector : %d Disk Idx %d\n",__func__,sh->sector,req_bio->raid_disk_num);
 			}
 			goto out_delay;
 		}

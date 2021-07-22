@@ -2604,7 +2604,8 @@ retry:
 			spin_lock_irqsave(&mddev->raid_epoch.epoch_lock, flags);
 			if (mddev->raid_epoch.barrier == 0) { /* Barrier Flag is not set */
 				if (mddev->raid_epoch.pending) {
-					printk(KERN_INFO "[SWDEBUG] (%s) Barrier Enabled RAID Success!, RAID E_COUNT :%d\n",__func__,atomic_read(&mddev->raid_epoch.e_count));
+					trace_ext4_da_writepages_barrier(1);
+					// printk(KERN_INFO "[SWDEBUG] (%s) Barrier Enabled RAID Success!, RAID E_COUNT :%d\n",__func__,atomic_read(&mddev->raid_epoch.e_count));
 					mddev->raid_epoch.barrier = 1;
                                 	atomic_dec(&mddev->raid_epoch.e_count);
                                 	barrier();
@@ -2613,8 +2614,6 @@ retry:
 				}
 				else {
                                 	printk(KERN_ERR "[SWDEBUG] (%s) Barrier Enabled RAID Fail!, RAID E_COUNT :%d\n",__func__,atomic_read(&mddev->raid_epoch.e_count));
-                                	barrier();
-					// atomic_set(&mddev->raid_epoch.barrier, 0);
                                 	BUG_ON(atomic_read(&mddev->raid_epoch.e_count) < 0);
                                 	current->barrier_fail = 1;
 				}				

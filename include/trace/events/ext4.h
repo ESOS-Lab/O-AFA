@@ -323,6 +323,23 @@ TRACE_EVENT(ext4_da_writepages,
 		  (unsigned long) __entry->writeback_index)
 );
 
+TRACE_EVENT(ext4_da_writepages_barrier,
+
+	TP_PROTO(int dummy),
+	
+	TP_ARGS(dummy),
+
+	TP_STRUCT__entry(
+		__field(	int,  dummy			)	
+	),
+
+	TP_fast_assign(
+		__entry->dummy		= dummy;
+	),
+
+	TP_printk("Direct Barrier Request Count %d", __entry->dummy)
+);
+
 TRACE_EVENT(ext4_da_write_pages,
 	TP_PROTO(struct inode *inode, struct mpage_da_data *mpd),
 
@@ -756,6 +773,60 @@ TRACE_EVENT(ext4_free_blocks,
 );
 
 TRACE_EVENT(ext4_sync_file_enter,
+	TP_PROTO(struct file *file, int datasync),
+
+	TP_ARGS(file, datasync),
+
+	TP_STRUCT__entry(
+		__field(	dev_t,	dev			)
+		__field(	ino_t,	ino			)
+		__field(	ino_t,	parent			)
+		__field(	int,	datasync		)
+	),
+
+	TP_fast_assign(
+		struct dentry *dentry = file->f_path.dentry;
+
+		__entry->dev		= dentry->d_inode->i_sb->s_dev;
+		__entry->ino		= dentry->d_inode->i_ino;
+		__entry->datasync	= datasync;
+		__entry->parent		= dentry->d_parent->d_inode->i_ino;
+	),
+
+	TP_printk("dev %d,%d ino %lu parent %lu datasync %d ",
+		  MAJOR(__entry->dev), MINOR(__entry->dev),
+		  (unsigned long) __entry->ino,
+		  (unsigned long) __entry->parent, __entry->datasync)
+);
+
+TRACE_EVENT(ext4_sync_file_stage1,
+	TP_PROTO(struct file *file, int datasync),
+
+	TP_ARGS(file, datasync),
+
+	TP_STRUCT__entry(
+		__field(	dev_t,	dev			)
+		__field(	ino_t,	ino			)
+		__field(	ino_t,	parent			)
+		__field(	int,	datasync		)
+	),
+
+	TP_fast_assign(
+		struct dentry *dentry = file->f_path.dentry;
+
+		__entry->dev		= dentry->d_inode->i_sb->s_dev;
+		__entry->ino		= dentry->d_inode->i_ino;
+		__entry->datasync	= datasync;
+		__entry->parent		= dentry->d_parent->d_inode->i_ino;
+	),
+
+	TP_printk("dev %d,%d ino %lu parent %lu datasync %d ",
+		  MAJOR(__entry->dev), MINOR(__entry->dev),
+		  (unsigned long) __entry->ino,
+		  (unsigned long) __entry->parent, __entry->datasync)
+);
+
+TRACE_EVENT(ext4_sync_file_stage2,
 	TP_PROTO(struct file *file, int datasync),
 
 	TP_ARGS(file, datasync),

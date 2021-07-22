@@ -32,6 +32,10 @@
 #include "ext4.h"
 #include "ext4_jbd2.h"
 
+/* SW Modified */
+#include "../../drivers/md/md.h"
+#include "../../drivers/md/raid5.h"
+
 #include <trace/events/ext4.h>
 
 /*
@@ -207,6 +211,9 @@ int ext4_fbarrier_file(struct file *file, loff_t start, loff_t end, int datasync
 	int ret;//, err;
 	tid_t commit_tid;
 	bool needs_barrier = false;
+	dev_t unit;
+	unsigned long flags;
+	struct mddev *mddev = NULL;
 
 	J_ASSERT(ext4_journal_current_handle() == NULL);
 	
@@ -221,7 +228,7 @@ int ext4_fbarrier_file(struct file *file, loff_t start, loff_t end, int datasync
 	}
 	else
 		ret = filemap_write_and_dispatch_range(inode->i_mapping, start, end);
-
+	
 	if (ret)
 		return ret;
 	mutex_lock(&inode->i_mutex);
@@ -260,16 +267,41 @@ int ext4_fbarrier_file(struct file *file, loff_t start, loff_t end, int datasync
 	}
 
 	commit_tid = datasync ? ei->i_datasync_tid : ei->i_sync_tid;
+
+	if (!datasync && journal->j_flags & JBD2_BARRIER &&
+		!jbd2_trans_will_send_data_barrier(journal, commit_tid))
+		needs_barrier = true;
 	
-	if (datasync && needs_barrier) {
-	  printk(KERN_ERR "UFS: %s: BARRIER_FAIL\n", __func__);
-	  commit_tid = ei->i_sync_tid;
-	  current->barrier_fail = 0;
- 
+	if (needs_barrier) {
+		unit = inode->i_sb->s_bdev;
+		mddev = mddev_find(unit);
+		if (mddev) {
+			// printk (KERN_ERR "[FileSystem] (%s) Mddev : %p\n",__func__, mddev);
+			spin_lock_irqsave(&mddev->raid_epoch.epoch_lock, flags);
+			if (!mddev->raid_epoch.barrier) {
+				if (mddev->raid_epoch.pending)
+					printk (KERN_ERR "[FileSystem] (%s) We need to set Barrier\n",__func__);
+				else
+					printk (KERN_ERR "[FileSystem] (%s) We need to issue barrier\n",__func__);
+				spin_unlock_irqrestore(&mddev->raid_epoch.epoch_lock, flags);
+				blkdev_issue_barrier(inode->i_sb->s_bdev, GFP_KERNEL, NULL);
+			}
+			else
+				spin_unlock_irqrestore(&mddev->raid_epoch.epoch_lock, flags);
+		}	
+		/*
+		else {
+			printk (KERN_ERR "[SWDEBUG] (%s) We are not working on RAID\n",__func__);
+			blkdev_issue_barrier(inode->i_sb->s_bdev, GFP_KERNEL, NULL);
+		}
+		*/
+		// printk (KERN_ERR "UFS Barrier Fail!\n");
+		current->barrier_fail = 0;
+		goto out;
 	}
 	
 	ret = jbd2_complete_transaction(journal, commit_tid);
-	  
+
  out:
 	mutex_unlock(&inode->i_mutex);
 	trace_ext4_sync_file_exit(inode, ret);

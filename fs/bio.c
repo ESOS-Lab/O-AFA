@@ -275,6 +275,7 @@ void bio_init(struct bio *bio)
 	bio->bi_flags = 1 << BIO_UPTODATE;
 	atomic_set(&bio->bi_cnt, 1);
 	atomic_set(&bio->dispatch_check, 0); /* SW Modified */
+	atomic_set(&bio->dbarrier_check, 0); /* SW Modified */
 }
 EXPORT_SYMBOL(bio_init);
 

@@ -472,11 +472,13 @@ EXPORT_SYMBOL(blkdev_issue_flush);
 int blkdev_issue_barrier(struct block_device *bdev, gfp_t gfp_mask,
 		sector_t *error_sector)
 {
-	DECLARE_COMPLETION_ONSTACK(wait);
+	// DECLARE_COMPLETION_ONSTACK(wait);
 	struct request_queue *q;
 	struct bio *bio;
 	int ret = 0;
 	struct blk_plug plug;
+	
+	printk (KERN_INFO "[Block I/O] (%s) We are going to issue dummy barrier\n",__func__);
 
 	if (bdev->bd_disk == NULL)
 		return -ENXIO;
@@ -506,9 +508,11 @@ int blkdev_issue_barrier(struct block_device *bdev, gfp_t gfp_mask,
 	 * -Joontaek Oh.
 	 */
 	bio = bio_alloc(gfp_mask, 0);
-	bio->bi_end_io = bio_end_flush;
+	bio->bi_end_io = NULL; /* SW Modified, We need to check
+				only whether dispatch is completed or not */
 	bio->bi_bdev = bdev;
-	bio->bi_private = &wait;
+	// bio->bi_private = &wait; /* SW Modified */
+	atomic_set(&bio->dbarrier_check, 1);
 
 	bio_get(bio);
 	submit_bio(WRITE_BARRIER, bio);

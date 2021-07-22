@@ -87,6 +87,7 @@ struct bio {
 	int			raid_disk_num;  /* SW Modified */
 	unsigned int		raid_dispatch; /* SW Modified */
 	atomic_t		dispatch_check; /* SW Modified */
+	atomic_t		dbarrier_check; /* SW Modified */
 	// struct list_head	dispatch_list; /* SW Modified */
 
 	struct bio_vec		*bi_io_vec;	/* the actual vec list */

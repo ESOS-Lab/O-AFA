@@ -2,6 +2,8 @@
 # Makefile for the kernel software RAID and LVM drivers.
 #
 
+CFLAGS_md.o	= -I$(src)
+
 dm-mod-y	+= dm.o dm-table.o dm-target.o dm-linear.o dm-stripe.o \
 		   dm-ioctl.o dm-io.o dm-kcopyd.o dm-sysfs.o
 dm-multipath-y	+= dm-path-selector.o dm-mpath.o

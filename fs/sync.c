@@ -233,7 +233,7 @@ static int do_fbarrier(unsigned int fd, int datasync)
 	struct fd f =fdget(fd);
 	int ret = -EBADF;
 
-	printk("in do_fbarrier FN\n");
+	// printk("in do_fbarrier FN\n");
 
 	if (f.file) {
 		ret = vfs_fbarrier(f.file, datasync);
