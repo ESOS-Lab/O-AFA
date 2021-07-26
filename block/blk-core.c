@@ -3263,6 +3263,7 @@ void blk_request_dispatched(struct request *req)
 			}
 			if (bio->raid_dispatch) {
 				if (atomic_read(&bio->dbarrier_check)) {
+					printk (KERN_INFO "[RAID SCHEDULER] (%s) Dummy Barrier Arrived\n",__func__);
 					sh = NULL;
 					dev = NULL;
 					mddev = bio->bi_private;	
@@ -3289,7 +3290,7 @@ void blk_request_dispatched(struct request *req)
 					spin_unlock_irqrestore(&mddev->raid_epoch.epoch_lock, l_flags);
 					wake_up_all(&mddev->io_wait);
 					wake_up(&mddev->barrier_wait);
-					// printk(KERN_INFO "[RAID SCHEDULER] (raid_request_dispatched) Finish Epoch!\n");
+					printk(KERN_INFO "[RAID SCHEDULER] (raid_request_dispatched) Finish Epoch!\n");
 				}
 			}
 		}

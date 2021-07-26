@@ -54,8 +54,8 @@
 #include "md.h"
 #include "bitmap.h"
 
-#define CREATE_TRACE_POINTS
-#include "md-trace.h"
+// #define CREATE_TRACE_POINTS
+// #include "md-trace.h"
 
 #ifndef MODULE
 static void autostart_arrays(int part);

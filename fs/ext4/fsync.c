@@ -273,29 +273,7 @@ int ext4_fbarrier_file(struct file *file, loff_t start, loff_t end, int datasync
 		needs_barrier = true;
 	
 	if (needs_barrier) {
-		unit = inode->i_sb->s_bdev;
-		mddev = mddev_find(unit);
-		if (mddev) {
-			// printk (KERN_ERR "[FileSystem] (%s) Mddev : %p\n",__func__, mddev);
-			spin_lock_irqsave(&mddev->raid_epoch.epoch_lock, flags);
-			if (!mddev->raid_epoch.barrier) {
-				if (mddev->raid_epoch.pending)
-					printk (KERN_ERR "[FileSystem] (%s) We need to set Barrier\n",__func__);
-				else
-					printk (KERN_ERR "[FileSystem] (%s) We need to issue barrier\n",__func__);
-				spin_unlock_irqrestore(&mddev->raid_epoch.epoch_lock, flags);
-				blkdev_issue_barrier(inode->i_sb->s_bdev, GFP_KERNEL, NULL);
-			}
-			else
-				spin_unlock_irqrestore(&mddev->raid_epoch.epoch_lock, flags);
-		}	
-		/*
-		else {
-			printk (KERN_ERR "[SWDEBUG] (%s) We are not working on RAID\n",__func__);
-			blkdev_issue_barrier(inode->i_sb->s_bdev, GFP_KERNEL, NULL);
-		}
-		*/
-		// printk (KERN_ERR "UFS Barrier Fail!\n");
+		blkdev_issue_barrier(inode->i_sb->s_bdev, GFP_KERNEL, NULL);
 		current->barrier_fail = 0;
 		goto out;
 	}
