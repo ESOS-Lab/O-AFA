@@ -478,8 +478,6 @@ int blkdev_issue_barrier(struct block_device *bdev, gfp_t gfp_mask,
 	int ret = 0;
 	struct blk_plug plug;
 	
-	printk (KERN_INFO "[Block I/O] (%s) We are going to issue dummy barrier\n",__func__);
-
 	if (bdev->bd_disk == NULL)
 		return -ENXIO;
 

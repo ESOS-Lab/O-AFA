@@ -3263,7 +3263,6 @@ void blk_request_dispatched(struct request *req)
 			}
 			if (bio->raid_dispatch) {
 				if (atomic_read(&bio->dbarrier_check)) {
-					printk (KERN_INFO "[RAID SCHEDULER] (%s) Dummy Barrier Arrived\n",__func__);
 					sh = NULL;
 					dev = NULL;
 					mddev = bio->bi_private;	
@@ -3275,11 +3274,13 @@ void blk_request_dispatched(struct request *req)
 				}
 			}
 			if (bio->raid_dispatch && bio->bi_rw & WRITE_BARRIER && !bio->bi_phys_segments) {
-				flags = true;
-				atomic_dec(&mddev->raid_epoch.e_count);
-				// printk(KERN_INFO "[RAID_SCHEDULER] (%s) Z_BARRIER, S_Sector:%d, Disk_Idx:%d, Epoch Count : %d\n", __func__, sh->sector, req_bio->raid_disk_num, atomic_read(&mddev->raid_epoch.e_count));
+				flags = atomic_dec_and_test(&mddev->raid_epoch.e_count);
+				// if (atomic_read(&bio->dbarrier_check))
+				//	printk (KERN_INFO "[RAID SCHEDULER] (%s) Dummy Barrier, Disk_Idx : %d, Epoch Count : %d\n",__func__, req_bio->raid_disk_num, atomic_read(&mddev->raid_epoch.e_count));
+				//else
+				//	printk(KERN_INFO "[RAID SCHEDULER] (%s) Z_BARRIER, S_Sector:%d, Disk_Idx:%d, Epoch Count : %d\n", __func__, sh->sector, req_bio->raid_disk_num, atomic_read(&mddev->raid_epoch.e_count));
 				if (atomic_read(&mddev->raid_epoch.e_count) < 0) {
-					printk (KERN_ERR "[RAID SCHEDULER] (%s) Epoch Count is : %d\n",__func__, atomic_read(&mddev->raid_epoch.e_count));
+					printk (KERN_ERR "[RAID SCHEDULER] (%s) Z_BARRIER : Epoch Count is : %d\n",__func__, atomic_read(&mddev->raid_epoch.e_count));
         	                	// printk (KERN_ERR "[RAID SCHEDULER] (%s) S_Sector:%d, Disk_Idx:%d\n", __func__, sh->sector, bio->raid_disk_num);
 	                        	// printk (KERN_ERR "[RAID SCHEDULER] (%s) Writeback? : %d\n", __func__, test_bit(R5_PGdispatch_Wb, &dev->flags));
 				}
@@ -3290,7 +3291,7 @@ void blk_request_dispatched(struct request *req)
 					spin_unlock_irqrestore(&mddev->raid_epoch.epoch_lock, l_flags);
 					wake_up_all(&mddev->io_wait);
 					wake_up(&mddev->barrier_wait);
-					printk(KERN_INFO "[RAID SCHEDULER] (raid_request_dispatched) Finish Epoch!\n");
+					// printk(KERN_INFO "[RAID SCHEDULER] (blk_request_dispatched) Z_BARRIER : Finish Epoch!\n");
 				}
 			}
 		}

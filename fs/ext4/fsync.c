@@ -272,7 +272,7 @@ int ext4_fbarrier_file(struct file *file, loff_t start, loff_t end, int datasync
 		!jbd2_trans_will_send_data_barrier(journal, commit_tid))
 		needs_barrier = true;
 	
-	if (needs_barrier) {
+	if (needs_barrier || datasync) {
 		blkdev_issue_barrier(inode->i_sb->s_bdev, GFP_KERNEL, NULL);
 		current->barrier_fail = 0;
 		goto out;
