@@ -425,27 +425,6 @@ struct mddev {
 	struct work_struct flush_work;
 	struct work_struct event_work;	/* used by dm to report failure event */
 	void (*sync_super)(struct mddev *mddev, struct md_rdev *rdev);
-
-	/* SW Modified */
-	struct {
-		unsigned int		barrier;
-		//atomic_t		barrier;
-
-		int 			pending;
-		// atomic_t		pending;
-		unsigned int		dispatch;
-		unsigned int 		complete;
-		unsigned int		error;
-		unsigned int		error_flags;
-		
-		atomic_t		e_count;
-		atomic_t 		enable;
-
-		spinlock_t		epoch_lock;
-		
-	} raid_epoch;
-	wait_queue_head_t		io_wait; /* Wake up All */
-	wait_queue_head_t		barrier_wait; /* Wake up 1 Thread */
 };
 
 /* SW Modified */

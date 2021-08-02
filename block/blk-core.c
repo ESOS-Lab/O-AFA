@@ -1558,7 +1558,7 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 		list_for_each_safe(ptr, ptrn, &current->storage_list) {
 			struct storage_epoch *storage_epoch_element = NULL; 
 			storage_epoch_element = list_entry(ptr, struct storage_epoch, list);
-			if (atomic_read(&storage_epoch_element->finish)) {
+			if (atomic_read(&storage_epoch_element->clear)) {
 				list_del(ptr);
 				kfree(storage_epoch_element);
 			}
@@ -1566,7 +1566,7 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 		/* SW Modified */
 		list_for_each(ptr, &current->storage_list) {
 			storage_epoch = list_entry(ptr, struct storage_epoch, list);
-			if (storage_epoch->q == q) {
+			if (storage_epoch->q == q && !atomic_read(&storage_epoch->finish)) {
 				find = 1;
 				break;
 			}
@@ -1577,10 +1577,6 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 		if (!find) {
 			storage_epoch = kmalloc(sizeof(struct storage_epoch),GFP_KERNEL);
 			memset(storage_epoch, 0, sizeof(struct storage_epoch));
-			if (!current) {
-				printk(KERN_ERR "[STORAGE SCHEDULER] (%s) Cannot Store addr of task struct",__func__);
-				return;
-			}
 			storage_epoch->task = current;
 			storage_epoch->q = q;
 			
@@ -1592,6 +1588,7 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 			spin_lock_init(&storage_epoch->s_e_lock);		
 			atomic_set(&storage_epoch->s_e_count , 0);
 			atomic_set(&storage_epoch->finish, 0);
+			atomic_set(&storage_epoch->clear, 0);
 			INIT_LIST_HEAD(&storage_epoch->list);
 
 			spin_lock_irqsave(&current->list_lock, flags);
@@ -1599,9 +1596,6 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 			spin_unlock_irqrestore(&current->list_lock, flags);
 		
 			atomic_inc(&storage_epoch->s_e_count);
-
-			// if (bio->raid_dispatch)
-				// printk(KERN_INFO "[STORAGE SCHEDULER] (%s) Start Storage Epoch Request, Disk idx : %d\n",__func__,bio->raid_disk_num);	
 		}
 
 		atomic_inc(&storage_epoch->s_e_count);
@@ -1609,21 +1603,13 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 		spin_lock_irqsave(&storage_epoch->s_e_lock, flags);
 		bio->storage_epoch = storage_epoch;
 		storage_epoch->pending++;
-		if (bio->raid_dispatch && storage_epoch->barrier && bio->bi_rw & REQ_ORDERED)
-			printk(KERN_ERR "[STORAGE SCHEDULER] (%s) block I/O after Barrier Request! to the Disk %d\n",__func__,bio->raid_disk_num);
-		
+	
 		if (bio->bi_rw & REQ_BARRIER) {
 			storage_epoch->barrier = 1;
+			atomic_set(&storage_epoch->finish, 1);
 			atomic_dec(&storage_epoch->s_e_count);
-			//if (bio->raid_dispatch)
-			//	printk(KERN_INFO "[STORAGE SCHEDULER] (%s) Finish Storage Epoch Request, Disk idx : %d, E_Count : %d\n",__func__,bio->raid_disk_num,atomic_read(&storage_epoch->s_e_count));	
 		}
 		
-		if (bio->raid_dispatch) {
-			sh = bio->bi_private;
-			//printk (KERN_INFO "[STORAGE SCHEDULER] (%s)  # of Pending:%d, STRIPE SECTOR:%d, disk_idx:%d, E_Count :%d\n", 
-			//		__func__,storage_epoch->pending, sh->sector, bio->raid_disk_num, atomic_read(&storage_epoch->s_e_count));
-		}
 		spin_unlock_irqrestore(&storage_epoch->s_e_lock, flags);
 	}
 
@@ -3231,7 +3217,7 @@ void blk_request_dispatched(struct request *req)
 	if (req->cmd_type != REQ_TYPE_FS)
 		return;
 
-	if (!req->__data_len && !(req->cmd_bflags & REQ_ORDERED))
+	if (!req->__data_len && !(req->cmd_bflags & REQ_BARRIER))
 		return;
 
 	req_bio = req->bio;
@@ -3245,57 +3231,11 @@ void blk_request_dispatched(struct request *req)
 				struct storage_epoch *storage_epoch;
 				storage_epoch = bio->storage_epoch;
 				atomic_dec(&storage_epoch->s_e_count);
-				if (bio->raid_dispatch) {
-					sh = bio->bi_private;
-					//printk(KERN_INFO "[STORAGE SCHEDULER] (%s) E_Count : %d, S_Secotr:%d, Disk_Idx:%d\n",
-					//	__func__, atomic_read(&storage_epoch->s_e_count), sh->sector, bio->raid_disk_num);
-				}
-
-				if (atomic_read(&storage_epoch->s_e_count) < 0)
-					printk(KERN_ERR "[STORAGE SCHEDULER] (%s) Critical Error at E_Count : %d!\n",__func__,atomic_read(&storage_epoch->s_e_count));			
-
 				if (atomic_read(&storage_epoch->s_e_count) == 0) {
-					/* SW Modified */
-					atomic_set(&storage_epoch->finish , 1);
-					//if (bio->raid_dispatch)
-					//	printk (KERN_INFO "[STORAGE SCHEDULER] (%s) Storage Epoch %d is Finished!\n",__func__,bio->raid_disk_num);
-				}
-			}
-			if (bio->raid_dispatch) {
-				if (atomic_read(&bio->dbarrier_check)) {
-					sh = NULL;
-					dev = NULL;
-					mddev = bio->bi_private;	
-				}
-				else {
-					sh = bio->bi_private;
-					mddev = sh->raid_conf->mddev;
-					dev = &sh->dev[bio->raid_disk_num];
-				}
-			}
-			if (bio->raid_dispatch && bio->bi_rw & WRITE_BARRIER && !bio->bi_phys_segments) {
-				flags = atomic_dec_and_test(&mddev->raid_epoch.e_count);
-				// if (atomic_read(&bio->dbarrier_check))
-				//	printk (KERN_INFO "[RAID SCHEDULER] (%s) Dummy Barrier, Disk_Idx : %d, Epoch Count : %d\n",__func__, req_bio->raid_disk_num, atomic_read(&mddev->raid_epoch.e_count));
-				//else
-				//	printk(KERN_INFO "[RAID SCHEDULER] (%s) Z_BARRIER, S_Sector:%d, Disk_Idx:%d, Epoch Count : %d\n", __func__, sh->sector, req_bio->raid_disk_num, atomic_read(&mddev->raid_epoch.e_count));
-				if (atomic_read(&mddev->raid_epoch.e_count) < 0) {
-					printk (KERN_ERR "[RAID SCHEDULER] (%s) Z_BARRIER : Epoch Count is : %d\n",__func__, atomic_read(&mddev->raid_epoch.e_count));
-        	                	// printk (KERN_ERR "[RAID SCHEDULER] (%s) S_Sector:%d, Disk_Idx:%d\n", __func__, sh->sector, bio->raid_disk_num);
-	                        	// printk (KERN_ERR "[RAID SCHEDULER] (%s) Writeback? : %d\n", __func__, test_bit(R5_PGdispatch_Wb, &dev->flags));
-				}
-				if (flags && atomic_read(&mddev->raid_epoch.enable) && atomic_read(&mddev->raid_epoch.e_count) == 0) 	{
-					atomic_set(&mddev->raid_epoch.enable,0);
-					spin_lock_irqsave(&mddev->raid_epoch.epoch_lock, l_flags);
-                			mddev->raid_epoch.barrier = 0;
-					spin_unlock_irqrestore(&mddev->raid_epoch.epoch_lock, l_flags);
-					wake_up_all(&mddev->io_wait);
-					wake_up(&mddev->barrier_wait);
-					// printk(KERN_INFO "[RAID SCHEDULER] (blk_request_dispatched) Z_BARRIER : Finish Epoch!\n");
+					atomic_set(&storage_epoch->clear , 1);
 				}
 			}
 		}
-
 
 		for (i=0; i < bio->bi_vcnt; i++) {
 			struct bio_vec *bvec = &bio->bi_io_vec[i];

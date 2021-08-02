@@ -297,6 +297,7 @@ enum r5dev_flags {
 			 */
 	R5_Discard,	/* Discard the stripe */
 	R5_OrderedIO,   /* SW Modified */
+	R5_BarrierIO,
 	R5_PGdispatch,  /* SW Modified, Give One more opportunity at raid5_write_end_request() */
 	R5_PGdispatch_Wb, /* Debugging Purporse */
 	R5_PGdispatch_Dp, /* Debugging Purporse */

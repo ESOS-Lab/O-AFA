@@ -2598,31 +2598,11 @@ retry:
 	/* UFS */
 	if (wbc->sync_mode == WB_BARRIER_ALL) {
 		/* SW Modified: Check if this bdev is raid or not */
-		/*
 		dev_t unit = inode->i_sb->s_dev;
 		struct mddev *mddev = mddev_find(unit);
-		if (mddev) {
-			spin_lock_irqsave(&mddev->raid_epoch.epoch_lock, flags);
-			if (mddev->raid_epoch.barrier == 0) { 
-				if (mddev->raid_epoch.pending) {
-					trace_ext4_da_writepages_barrier(1);
-					// printk(KERN_INFO "[SWDEBUG] (%s) Barrier Enabled RAID Success!, RAID E_COUNT :%d\n",__func__,atomic_read(&mddev->raid_epoch.e_count));
-					mddev->raid_epoch.barrier = 1;
-                                	atomic_dec(&mddev->raid_epoch.e_count);
-                                	barrier();
-					BUG_ON(atomic_read(&mddev->raid_epoch.e_count) < 0);
-                                	// printk(KERN_INFO "[RAID SCHEDULER] (%s) RAID E_COUNT :%d\n",__func__,atomic_read(&mddev->raid_epoch.e_count));
-				}
-				else {
-                                	printk(KERN_ERR "[SWDEBUG] (%s) Barrier Enabled RAID Fail!, RAID E_COUNT :%d\n",__func__,atomic_read(&mddev->raid_epoch.e_count));
-                                	BUG_ON(atomic_read(&mddev->raid_epoch.e_count) < 0);
-                                	current->barrier_fail = 1;
-				}				
-			}
-                        spin_unlock_irqrestore(&mddev->raid_epoch.epoch_lock, flags);
-		}
+		if (mddev) 
+			current->barrier_fail = 1;	
 		else
-		*/
 			blk_issue_barrier_plug(&plug);
 	}
 

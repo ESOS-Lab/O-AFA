@@ -512,7 +512,6 @@ static void mddev_put(struct mddev *mddev)
 
 void mddev_init(struct mddev *mddev)
 {
-	unsigned long flags;
 	mutex_init(&mddev->open_mutex);
 	mutex_init(&mddev->reconfig_mutex);
 	mutex_init(&mddev->bitmap_info.mutex);
@@ -523,18 +522,9 @@ void mddev_init(struct mddev *mddev)
 	atomic_set(&mddev->openers, 0);
 	atomic_set(&mddev->active_io, 0);
 	spin_lock_init(&mddev->write_lock);
-	spin_lock_init(&mddev->raid_epoch.epoch_lock);
-	spin_lock_irqsave(&mddev->raid_epoch.epoch_lock, flags);
-	mddev->raid_epoch.pending = 0;
-	spin_unlock_irqrestore(&mddev->raid_epoch.epoch_lock, flags);
 	atomic_set(&mddev->flush_pending, 0);
-	// atomic_set(&mddev->raid_epoch.barrier, 0); /* SW Modified */
-	atomic_set(&mddev->raid_epoch.enable, 0); /* SW Modified */
-	atomic_set(&mddev->raid_epoch.e_count, 0); /* SW Modified */
 	init_waitqueue_head(&mddev->sb_wait);
 	init_waitqueue_head(&mddev->recovery_wait);
-	init_waitqueue_head(&mddev->io_wait);
-	init_waitqueue_head(&mddev->barrier_wait);
 	mddev->reshape_position = MaxSector;
 	mddev->reshape_backwards = 0;
 	mddev->resync_min = 0;

@@ -79,6 +79,7 @@ struct storage_epoch {
 
 	atomic_t s_e_count;
 	atomic_t finish;
+	atomic_t clear;
 	spinlock_t s_e_lock;
 
 	struct list_head list;
