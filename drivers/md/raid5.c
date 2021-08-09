@@ -2641,6 +2641,7 @@ static int add_stripe_bio(struct stripe_head *sh, struct bio *bi, int dd_idx, in
 	struct bio **bip;
 	struct r5conf *conf = sh->raid_conf;
 	int firstwrite=0;
+	pid_t check_pid;
 
 	pr_debug("adding bi b#%llu to stripe s#%llu\n",
 		(unsigned long long)bi->bi_sector,
@@ -2659,6 +2660,8 @@ static int add_stripe_bio(struct stripe_head *sh, struct bio *bi, int dd_idx, in
 		bip = &sh->dev[dd_idx].towrite;
 		if (*bip == NULL)
 			firstwrite = 1;
+		if (*bip && current->pid != sh->dev[dd_idx].original_pid) /* SW Modified */
+			goto overlap;
 	} else
 		bip = &sh->dev[dd_idx].toread;
 	while (*bip && (*bip)->bi_sector < bi->bi_sector) {
@@ -2689,6 +2692,9 @@ static int add_stripe_bio(struct stripe_head *sh, struct bio *bi, int dd_idx, in
 		if (sector >= sh->dev[dd_idx].sector + STRIPE_SECTORS)
 			set_bit(R5_OVERWRITE, &sh->dev[dd_idx].flags);
 	}
+
+	if (likely(firstwrite))
+		sh->dev[dd_idx].original_pid = current->pid;
 
 	pr_debug("added bi b#%llu to stripe s#%llu, disk %d.\n",
 		(unsigned long long)(*bip)->bi_sector,
@@ -4571,11 +4577,14 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 	const int rw = bio_data_dir(bi);
 	int remaining;
 
+	/* Dummy Barrier Request */
+	/*
 	if (unlikely(atomic_read(&bi->dbarrier_check))) {
 		raid5_barrier_request(mddev, conf);
 		return;
 	}
-
+	*/
+	
 	if (unlikely(bi->bi_rw & REQ_FLUSH)) {
 		md_flush_request(mddev, bi);
 		return;
@@ -4694,6 +4703,8 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 				goto retry;
 			}
 			finish_wait(&conf->wait_for_overlap, &w);
+	
+			
 			set_bit(STRIPE_HANDLE, &sh->state);
 			clear_bit(STRIPE_DELAYED, &sh->state);
 			

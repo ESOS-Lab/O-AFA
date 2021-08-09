@@ -1573,13 +1573,6 @@ static void scsi_request_fn(struct request_queue *q)
 		}
 		
                 req_bio = req->bio;
-		/*
-                if (req_bio && req_bio->raid_dispatch) {
-                	sh = req_bio->bi_private;
-			if(sh->sector == 4325384)
-				dump_stack();
-                }
-		*/
 
 		/*
 		 * Remove the request from the request list.
@@ -1655,7 +1648,6 @@ static void scsi_request_fn(struct request_queue *q)
 		}
 		/* UFS */
 		//if (req->cmd_bflags & REQ_ORDERED)
-		// raid_request_dispatched(req);
 		blk_request_dispatched(req);
 	}
 

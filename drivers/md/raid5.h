@@ -232,7 +232,8 @@ struct stripe_head {
 		struct bio	*toread, *read, *towrite, *written;
 		sector_t	sector;			/* sector of this page */
 		unsigned long	flags;
-		atomic_t	dispatch_flag;
+		pid_t		original_pid; 		/* Avoid two epoch scheduler 
+							share one page, protected by stripe_lock */
 	} dev[1]; /* allocated with extra space depending of RAID geometry */
 };
 
