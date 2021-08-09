@@ -323,21 +323,23 @@ TRACE_EVENT(ext4_da_writepages,
 		  (unsigned long) __entry->writeback_index)
 );
 
-TRACE_EVENT(ext4_da_writepages_barrier,
+TRACE_EVENT(ext4_da_writepages_context,
 
-	TP_PROTO(int dummy),
+	TP_PROTO(int context, pid_t pid),
 	
-	TP_ARGS(dummy),
+	TP_ARGS(context, pid),
 
 	TP_STRUCT__entry(
-		__field(	int,  dummy			)	
+		__field(	int,  context			)	
+		__field(	pid_t, pid			)
 	),
 
 	TP_fast_assign(
-		__entry->dummy		= dummy;
+		__entry->context	= context;
+		__entry->pid		= pid;
 	),
 
-	TP_printk("Direct Barrier Request Count %d", __entry->dummy)
+	TP_printk("Context (%d) [%d]", __entry->context, __entry->pid)
 );
 
 TRACE_EVENT(ext4_da_write_pages,

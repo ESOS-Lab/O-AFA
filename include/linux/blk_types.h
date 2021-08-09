@@ -8,6 +8,7 @@
 #ifdef CONFIG_BLOCK
 
 #include <linux/types.h>
+#include <linux/hashtable.h>
 
 struct bio_set;
 struct bio;
@@ -88,7 +89,7 @@ struct bio {
 	unsigned int		raid_dispatch; /* SW Modified */
 	atomic_t		dispatch_check; /* SW Modified */
 	atomic_t		dbarrier_check; /* SW Modified */
-	// struct list_head	dispatch_list; /* SW Modified */
+	pid_t			shadow_pid; /* SW Modified */
 
 	struct bio_vec		*bi_io_vec;	/* the actual vec list */
 

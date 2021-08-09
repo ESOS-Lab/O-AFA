@@ -1527,11 +1527,10 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 	unsigned int request_count = 0;
 	/* SW Modified */
 	unsigned int find = 0;
-	struct storage_epoch *storage_epoch;
+	struct storage_epoch_list *storage_epoch_list = NULL;
+	struct storage_epoch *storage_epoch = NULL;
 	struct list_head *ptr, *ptrn;
 	unsigned long flags;
-
-	struct stripe_head *sh;
 
 	/*
 	 * low level driver can indicate that it wants pages above a
@@ -1553,9 +1552,27 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 
 	/* UFS */
 	if (bio->bi_rw & REQ_ORDERED) {
-		/* Critical Section Protection */
-		spin_lock_irqsave(&current->list_lock, flags);
-		list_for_each_safe(ptr, ptrn, &current->storage_list) {
+		/* Find storage_epoch_list from hash table */
+		hash_for_each_possible(current->epoch_set_table, storage_epoch_list, 
+			hlist, bio->shadow_pid & 0x3f) {
+			if (bio->shadow_pid == storage_epoch_list->pid)
+				break;
+			else 
+				continue;
+		}
+
+		/* if there is no matched list, create new one */
+		/* To Do : Cleaning storage_epoch_list when Process Exit */
+		if (!storage_epoch_list) {
+			storage_epoch_list = kmalloc(sizeof(struct storage_epoch_list), GFP_KERNEL); 
+			storage_epoch_list->pid = bio->shadow_pid;
+			hash_add(current->epoch_set_table, &storage_epoch_list->hlist, 
+				storage_epoch_list->pid & 0x7F);
+		}
+
+		/* Do Cleaning Finished Storage Epoch which is reserved at IRQ Handler */
+		/* To Do : Cleaning storage_epoch when Process Exit */
+		list_for_each_safe(ptr, ptrn, &storage_epoch_list->slist) {
 			struct storage_epoch *storage_epoch_element = NULL; 
 			storage_epoch_element = list_entry(ptr, struct storage_epoch, list);
 			if (atomic_read(&storage_epoch_element->clear)) {
@@ -1563,8 +1580,9 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 				kfree(storage_epoch_element);
 			}
 		}
-		/* SW Modified */
-		list_for_each(ptr, &current->storage_list) {
+	
+		/* Find Corresponding Epoch from list */
+		list_for_each(ptr, &storage_epoch_list->slist) {
 			storage_epoch = list_entry(ptr, struct storage_epoch, list);
 			if (storage_epoch->q == q && !atomic_read(&storage_epoch->finish)) {
 				find = 1;
@@ -1572,13 +1590,13 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 			}
 		}
 		
-		spin_unlock_irqrestore(&current->list_lock, flags);
-	
+		/* if there is no epoch, Start new epoch */
 		if (!find) {
 			storage_epoch = kmalloc(sizeof(struct storage_epoch),GFP_KERNEL);
 			memset(storage_epoch, 0, sizeof(struct storage_epoch));
 			storage_epoch->task = current;
 			storage_epoch->q = q;
+			storage_epoch->pid = bio->shadow_pid;
 			
 			storage_epoch->pending = 0;
 			storage_epoch->dispatch = 0;
@@ -1591,17 +1609,15 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 			atomic_set(&storage_epoch->clear, 0);
 			INIT_LIST_HEAD(&storage_epoch->list);
 
-			spin_lock_irqsave(&current->list_lock, flags);
-			list_add_tail(&storage_epoch->list, &current->storage_list);
-			spin_unlock_irqrestore(&current->list_lock, flags);
+			list_add_tail(&storage_epoch->list, &storage_epoch_list->slist);
 		
 			atomic_inc(&storage_epoch->s_e_count);
 		}
 
 		atomic_inc(&storage_epoch->s_e_count);
-
-		spin_lock_irqsave(&storage_epoch->s_e_lock, flags);
 		bio->storage_epoch = storage_epoch;
+		
+		spin_lock_irqsave(&storage_epoch->s_e_lock, flags);
 		storage_epoch->pending++;
 	
 		if (bio->bi_rw & REQ_BARRIER) {
@@ -3208,16 +3224,11 @@ EXPORT_SYMBOL(blk_issue_barrier_plug);
 void blk_request_dispatched(struct request *req)
 {
 	struct bio *req_bio;
-	/* SW Modified */
-	struct stripe_head *sh = NULL;
-	struct r5dev *dev = NULL;
-	struct mddev *mddev = NULL;
-	unsigned long flags = false, l_flags;
 
 	if (req->cmd_type != REQ_TYPE_FS)
 		return;
 
-	if (!req->__data_len && !(req->cmd_bflags & REQ_BARRIER))
+	if (!req->__data_len && !(req->cmd_bflags & REQ_ORDERED))
 		return;
 
 	req_bio = req->bio;
@@ -3332,6 +3343,7 @@ void blk_finish_epoch(int enable)
 {
 	// struct epoch *epoch = current->__epoch;
 	/* SW Modified */
+	/*
 	struct storage_epoch *storage_epoch = NULL;
 	struct list_head *ptr; //, *ptrn;
 	unsigned long flags;
@@ -3354,6 +3366,7 @@ void blk_finish_epoch(int enable)
 	        printk(KERN_ERR "UFS: %s: unstarted epoch!\n", __func__);
 		return;
 	}	
+	*/
 }
 EXPORT_SYMBOL(blk_finish_epoch);
 

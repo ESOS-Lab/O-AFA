@@ -476,7 +476,7 @@ int blkdev_issue_barrier(struct block_device *bdev, gfp_t gfp_mask,
 	struct request_queue *q;
 	struct bio *bio;
 	int ret = 0;
-	struct blk_plug plug;
+	// struct blk_plug plug;
 	
 	if (bdev->bd_disk == NULL)
 		return -ENXIO;

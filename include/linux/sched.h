@@ -53,6 +53,7 @@ struct sched_param {
 #include <linux/uidgid.h>
 #include <linux/gfp.h>
 
+#include <linux/hashtable.h>
 #include <asm/processor.h>
 
 struct exec_domain;
@@ -68,6 +69,7 @@ struct storage_epoch {
 
 	struct task_struct *task;
 	struct request_queue *q;
+	pid_t	pid;
 
 	unsigned int barrier;
 
@@ -83,6 +85,12 @@ struct storage_epoch {
 	spinlock_t s_e_lock;
 
 	struct list_head list;
+};
+
+struct storage_epoch_list {
+	struct list_head slist;
+	struct hlist_node hlist;
+	pid_t	pid;
 };
 
 /* UFS: epoch structure */
@@ -1472,10 +1480,10 @@ struct task_struct {
 	unsigned int	sequential_io_avg;
 #endif
 	/* UFS: epoch structure for task */
-	struct list_head storage_list;
-	spinlock_t list_lock;
-	// struct epoch *epoch;
-        // struct epoch *__epoch;
+	// struct list_head storage_list;
+	// spinlock_t list_lock;
+	struct epoch *epoch;
+        struct epoch *__epoch;
 	unsigned int barrier_fail;
 	unsigned int epoch_fail;
 	// atomic_t epoch_enable;
@@ -1483,6 +1491,9 @@ struct task_struct {
 	//struct list_head epoch_dispatch;
 	//struct list_head epoch_complte;
 	//struct list_head epoch_error;
+	
+	spinlock_t	epoch_table_lock;
+	DECLARE_HASHTABLE(epoch_set_table, 7); /* SW Modified */
 };
 
 /* Future-safe accessor for struct task_struct's cpus_allowed. */

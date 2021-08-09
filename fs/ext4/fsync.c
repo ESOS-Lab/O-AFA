@@ -130,7 +130,9 @@ int ext4_sync_file(struct file *file, loff_t start, loff_t end, int datasync)
 
 	if (datasync) {
 	  // current->barrier_fail = 0;
+		trace_ext4_da_writepages_context(1, current->pid);
 	        ret = filemap_write_and_wait_range(inode->i_mapping, start, end);
+		trace_ext4_da_writepages_context(1 << 1, current->pid);
 	        //ret = filemap_ordered_write_range(inode->i_mapping, start, end);
 		//ret = filemap_fdatawait_range(inode->i_mapping, start, end);
 	}
@@ -220,11 +222,13 @@ int ext4_fbarrier_file(struct file *file, loff_t start, loff_t end, int datasync
 	trace_ext4_sync_file_enter(file, datasync);
 
 	if (datasync) {
+		trace_ext4_da_writepages_context(1 << 2, current->pid);
 		current->barrier_fail = 0;
 		ret = filemap_ordered_write_range(inode->i_mapping, start, end);
 		if (current->barrier_fail)
 			needs_barrier = true;
 		ret = filemap_fdatadispatch_range(inode->i_mapping, start, end);
+		trace_ext4_da_writepages_context(1 << 3, current->pid);
 	}
 	else
 		ret = filemap_write_and_dispatch_range(inode->i_mapping, start, end);

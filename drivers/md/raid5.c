@@ -1300,8 +1300,6 @@ void raid_request_dispatched(struct request *req) /* SW Modified : Wake Up Page 
 	
 		while (wbi && wbi->bi_sector <
 			 dev->sector + STRIPE_SECTORS) { 
-			if(test_and_set_bit(R5_PGdispatch, &dev->flags))
-				break;
 
 			/* SW Modified : Track Dispatched Page using ops_run_biodrain routine */
 			__raid_request_dispatched(wbi, wbi->bi_sector, dev->sector);

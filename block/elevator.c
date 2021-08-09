@@ -355,8 +355,6 @@ void elv_dispatch_sort(struct request_queue *q, struct request *rq)
 	sector_t boundary;
 	struct list_head *entry;
 	long long stop_flags; /* UFS modification to support REQ_BARRIER and REQ_ORDERED */
-	/* SW Modified */
-	struct stripe_head *sh;
 	unsigned long flags;
 
 	if (q->last_merge == rq)
