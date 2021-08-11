@@ -1554,11 +1554,9 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 	if (bio->bi_rw & REQ_ORDERED) {
 		/* Find storage_epoch_list from hash table */
 		hash_for_each_possible(current->epoch_set_table, storage_epoch_list, 
-			hlist, bio->shadow_pid & 0x3f) {
+			hlist, bio->shadow_pid & 0x7f) {
 			if (bio->shadow_pid == storage_epoch_list->pid)
 				break;
-			else 
-				continue;
 		}
 
 		/* if there is no matched list, create new one */
@@ -3236,16 +3234,29 @@ void blk_request_dispatched(struct request *req)
 	while (req_bio) {
 		int i;
 		struct bio *bio = req_bio;
-		
-		if (req->cmd_bflags & REQ_ORDERED && !atomic_cmpxchg(&bio->dispatch_check,0,1)) {
+			
+		if (req->cmd_bflags & REQ_ORDERED) {
 			if (bio->storage_epoch) {
 				struct storage_epoch *storage_epoch;
 				storage_epoch = bio->storage_epoch;
-				atomic_dec(&storage_epoch->s_e_count);
-				if (atomic_read(&storage_epoch->s_e_count) == 0) {
-					atomic_set(&storage_epoch->clear , 1);
+				if (atomic_dec_and_test(&storage_epoch->s_e_count))
+					atomic_set(&storage_epoch->clear, 1);
 				}
+
+			if (bio->bi_end_io == raid5_end_dbarrier_request
+				&& !atomic_cmpxchg(&bio->dispatch_check, 0, 1)) {
+				struct stripe_head *sh = bio->bi_private;
+				atomic_dec(&bio->raid_epoch->dbarrier_count);	
+				set_bit(STRIPE_HANDLE, &sh->state);
+				release_stripe(sh);	
 			}
+		}
+
+		if (bio->bi_end_io == raid5_end_write_request
+			&& !atomic_cmpxchg(&bio->dispatch_check, 0, 1)) {
+			struct stripe_head *sh = bio->bi_private;
+			set_bit(STRIPE_HANDLE, &sh->state);
+			release_stripe(sh);	
 		}
 
 		for (i=0; i < bio->bi_vcnt; i++) {
@@ -3263,7 +3274,7 @@ void blk_request_dispatched(struct request *req)
 		req_bio = bio->bi_next;
 	}
 	
-	raid_request_dispatched(req);
+	// raid_request_dispatched(req);
 }
 
 EXPORT_SYMBOL(blk_request_dispatched);

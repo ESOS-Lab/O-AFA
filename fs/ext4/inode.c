@@ -2444,7 +2444,6 @@ static int ext4_da_writepages(struct address_space *mapping,
 	pgoff_t done_index = 0;
 	pgoff_t end;
 	struct blk_plug plug;
-	unsigned long flags;
 
 	trace_ext4_da_writepages(inode, wbc);
 
@@ -2600,8 +2599,24 @@ retry:
 		/* SW Modified: Check if this bdev is raid or not */
 		dev_t unit = inode->i_sb->s_dev;
 		struct mddev *mddev = mddev_find(unit);
-		if (mddev) 
-			current->barrier_fail = 1;	
+		struct raid_epoch *raid_epoch;
+		unsigned long flags;
+		if (mddev) { 
+			spin_lock_irqsave(&mddev->raid_epoch_table_lock, flags);
+			hash_for_each_possible(mddev->raid_epoch_table, raid_epoch,
+						hlist, current->pid & 0x7F) {
+				if(current->pid == raid_epoch->pid)
+					break;
+			}
+			if (!raid_epoch || !raid_epoch->pending) {
+				current->barrier_fail = 1;
+			}
+			else {
+				raid_epoch->barrier = 1;
+				atomic_dec(&raid_epoch->e_count);
+			}
+			spin_unlock_irqrestore(&mddev->raid_epoch_table_lock, flags);
+		}
 		else
 			blk_issue_barrier_plug(&plug);
 	}

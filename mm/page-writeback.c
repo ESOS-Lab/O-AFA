@@ -1910,9 +1910,6 @@ int generic_writepages(struct address_space *mapping,
 	struct blk_plug plug;
 	int ret;
 
-	/* SW Modified */
-	struct inode *inode;
-
 	/* deal with chardevs and other special file */
 	if (!mapping->a_ops->writepage)
 		return 0;
@@ -1921,23 +1918,6 @@ int generic_writepages(struct address_space *mapping,
 	ret = write_cache_pages(mapping, wbc, __writepage, mapping);
 	/* UFS */
         if (wbc->sync_mode == WB_BARRIER_ALL) {
-                /* SW Modified: Check if this bdev is raid or not */
-		/*
-		inode = mapping->host;
-                dev_t unit = inode->i_sb->s_dev;
-                struct mddev *mddev = mddev_find(unit);
-                if (mddev) {
-                        spin_lock(&mddev->epoch_lock);
-                        printk(KERN_INFO "[SWDEBUG] (%s) Request Finish Raid Epoch from FileSystem\n",__func__);
-                        if (mddev->__raid_epoch->barrier) {
-                                struct raid_epoch *raid_epoch = mddev->__raid_epoch;
-                                wait_event(mddev->barrier_wait, atomic_read(&raid_epoch->e_count) == 0);
-                        }
-                        raid_finish_epoch(mddev);
-                        spin_unlock(&mddev->epoch_lock);
-                }
-                else
-		*/
                 blk_issue_barrier_plug(&plug);
         }
 	blk_finish_plug(&plug);

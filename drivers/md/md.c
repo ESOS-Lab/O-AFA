@@ -530,6 +530,8 @@ void mddev_init(struct mddev *mddev)
 	mddev->resync_min = 0;
 	mddev->resync_max = MaxSector;
 	mddev->level = LEVEL_NONE;
+	hash_init(mddev->raid_epoch_table);
+	spin_lock_init(&mddev->raid_epoch_table_lock);
 	/*
 	raid_epoch_cachep = kmem_cache_create("mddev_epoch",
 			sizeof(struct raid_epoch), 0, SLAB_PANIC, NULL);

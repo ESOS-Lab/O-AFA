@@ -213,22 +213,17 @@ int ext4_fbarrier_file(struct file *file, loff_t start, loff_t end, int datasync
 	int ret;//, err;
 	tid_t commit_tid;
 	bool needs_barrier = false;
-	dev_t unit;
-	unsigned long flags;
-	struct mddev *mddev = NULL;
 
 	J_ASSERT(ext4_journal_current_handle() == NULL);
 	
 	trace_ext4_sync_file_enter(file, datasync);
 
 	if (datasync) {
-		trace_ext4_da_writepages_context(1 << 2, current->pid);
 		current->barrier_fail = 0;
 		ret = filemap_ordered_write_range(inode->i_mapping, start, end);
 		if (current->barrier_fail)
 			needs_barrier = true;
 		ret = filemap_fdatadispatch_range(inode->i_mapping, start, end);
-		trace_ext4_da_writepages_context(1 << 3, current->pid);
 	}
 	else
 		ret = filemap_write_and_dispatch_range(inode->i_mapping, start, end);
@@ -277,8 +272,9 @@ int ext4_fbarrier_file(struct file *file, loff_t start, loff_t end, int datasync
 		needs_barrier = true;
 	
 	if (needs_barrier) {
-		blkdev_issue_barrier(inode->i_sb->s_bdev, GFP_KERNEL, NULL);
+		// blkdev_issue_barrier(inode->i_sb->s_bdev, GFP_KERNEL, NULL);
 		current->barrier_fail = 0;
+		printk(KERN_ERR, "[FileSystem] (%s) Barrier Fail!\n",__func__);
 		goto out;
 	}
 	

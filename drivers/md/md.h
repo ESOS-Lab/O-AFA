@@ -425,25 +425,32 @@ struct mddev {
 	struct work_struct flush_work;
 	struct work_struct event_work;	/* used by dm to report failure event */
 	void (*sync_super)(struct mddev *mddev, struct md_rdev *rdev);
+
+	/* SW Modified */
+	spinlock_t			raid_epoch_table_lock;
+	DECLARE_HASHTABLE(raid_epoch_table, 7);	/* Master Hash Table */
 };
 
 /* SW Modified */
-/*
 struct raid_epoch {
 	struct mddev 		*mddev;
 	struct r5conf 		*conf;
+	pid_t			pid;
+	struct hlist_node	hlist;
 
 	unsigned int 		barrier;
+	unsigned int 		pending;
+	spinlock_t		raid_epoch_lock;
 
-	atomic_t 		pending;
-	unsigned int 		dispatch;
-	atomic_t 		complete;
-	unsigned int 		error;
-	unsigned int 		error_flags;
-
+	atomic_t		dbarrier_count;
 	atomic_t 		e_count;
 };
-*/
+
+struct raid_epoch_node {
+	struct list_head	node;
+	struct raid_epoch	*raid_epoch;
+};
+
 /*
 static inline void get_raid_epoch(struct raid_epoch *raid_epoch)
 {

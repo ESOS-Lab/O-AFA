@@ -249,7 +249,7 @@ static void __release_stripe(struct r5conf *conf, struct stripe_head *sh)
 		do_release_stripe(conf, sh);
 }
 
-static void release_stripe(struct stripe_head *sh)
+void release_stripe(struct stripe_head *sh)
 {
 	struct r5conf *conf = sh->raid_conf;
 	unsigned long flags;
@@ -261,6 +261,7 @@ static void release_stripe(struct stripe_head *sh)
 	}
 	local_irq_restore(flags);
 }
+EXPORT_SYMBOL(release_stripe);
 
 static inline void remove_hash(struct stripe_head *sh)
 {
@@ -543,20 +544,74 @@ static int use_new_offset(struct r5conf *conf, struct stripe_head *sh)
 
 static void
 raid5_end_read_request(struct bio *bi, int error);
-static void
-raid5_end_write_request(struct bio *bi, int error);
+void raid5_end_write_request(struct bio *bi, int error);
 
 static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 {
 	struct r5conf *conf = sh->raid_conf;
 	struct mddev *mddev = conf->mddev;
-	int i, k,disks = sh->disks;
-	unsigned long long barrier_disk_num = 0;
-	unsigned int cache_barrier_stripe = false;
-	unsigned long flags, pending, barrier;
-
+	int i, k, disks = sh->disks;
+	unsigned long flags;
+	unsigned long long *bdisk_num_array = NULL, *barrier_array = NULL;
+	struct raid_epoch **raid_epoch_array = NULL;
+	
 	might_sleep();
-				
+
+	raid_epoch_array = kmalloc(sizeof(struct raid_epoch *) * disks, GFP_KERNEL);
+	bdisk_num_array = kmalloc(sizeof(unsigned long long) * disks, GFP_KERNEL);	
+	barrier_array = kmalloc(sizeof(unsigned long long) * disks, GFP_KERNEL);	
+	
+	for (i = disks; i--; ) {
+		bdisk_num_array[i] = 0;
+		barrier_array[i] = 0;
+	}
+
+	for (i = disks; i--; ) {
+		struct r5dev *dev = &sh->dev[i];
+        	struct bio *obi = dev->written;                
+		unsigned int count = 0;
+        	if (test_bit(R5_OrderedIO, &sh->dev[i].flags) && obi) { 
+			spin_lock_irqsave(&obi->raid_epoch->raid_epoch_lock, flags);
+			if (obi->raid_epoch->barrier) {
+				for (k = disks; k--; ) {
+					if (test_bit(R5_OrderedIO, &sh->dev[i].flags) 
+						&& k !=sh->pd_idx)
+						count++;
+				}	
+				if (obi->raid_epoch->pending == count) {
+					set_bit(STRIPE_CACHE_BARRIER, &sh->state);
+					barrier_array[i] = dev->original_pid;
+					raid_epoch_array[i] = obi->raid_epoch;
+				}
+			}
+			/* SW : Need to Check, What if pending is increased twice 
+				by calling make_request() twice at the same device of stripe? */
+        	        obi->raid_epoch->pending--;                 
+			spin_unlock_irqrestore(&obi->raid_epoch->raid_epoch_lock, flags);
+        	}                                                    
+	}                                                            
+
+	/* SW Modified : Form Linked List of RAID Epoch */
+	/*
+	bi = &sh->dev[sh->pd_idx].req;
+	bi->multiple_pid = 1;
+	INIT_LIST_HEAD(bi->raid_epoch_list);
+	for (i = disks; i--; ) {
+		if (i == sh->pd_idx)
+			continue;
+		if (test_bit(R5_OrderedIO, &sh->dev[i].flags)) {
+			for (k = disks; k--; ) {
+				if (test_bit(R5_OrderedIO, &sh->dev[k].flags) && 
+					sh->dev[i]->original_pid == sh->dev[k]->original_pid)
+					break;
+			} 
+			raid_epoch_node = kmalloc(sizeof(struct raid_epoch_node), GFP_KERNEL);
+			raid_epoch_node->raid_epoch = sh->dev[i]->written->raid_epoch;
+			// Need to duplication check
+			list_add_tail(&raid_epoch_node.node, &bi->raid_epoch_list);
+		}
+	}
+	*/
 	for (i = disks; i--; ) {
 		unsigned long long rw;
 		int replace_only = 0;
@@ -571,8 +626,15 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 				rw |= REQ_DISCARD;
 			if (test_and_clear_bit(R5_OrderedIO, &sh->dev[i].flags))
 				rw |= REQ_ORDERED;
-			if (test_and_clear_bit(R5_BarrierIO, &sh->dev[i].flags))
-				rw |= REQ_BARRIER;
+			for (k = disks; k--; ) {
+				if (sh->dev[i].original_pid == barrier_array[k]
+					|| (i == sh->pd_idx && barrier_array[k])) {
+					rw |= REQ_BARRIER;
+					bdisk_num_array[k] |= 1 << i;
+					break;
+				}
+			}
+		
 		} else if (test_and_clear_bit(R5_Wantread, &sh->dev[i].flags))
 			rw = READ;
 		else if (test_and_clear_bit(R5_WantReplace,
@@ -584,7 +646,7 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 		if (test_and_clear_bit(R5_SyncIO, &sh->dev[i].flags))
 			rw |= REQ_SYNC;
 
-		bi = &sh->dev[i].req;
+		bi = &sh->dev[i].req; 
 		rbi = &sh->dev[i].rreq; /* For writing to replacement */
 
 		rcu_read_lock();
@@ -669,7 +731,7 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 				: raid5_end_read_request;
 			bi->bi_private = sh;
 
-			pr_debug("%s: for %llu schedule op %ld on disc %d\n",
+			pr_debug("%s: for %llu schedule op %lld on disc %d\n",
 				__func__, (unsigned long long)sh->sector,
 				bi->bi_rw, i);
 			atomic_inc(&sh->count);
@@ -716,7 +778,7 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 			rbi->bi_end_io = raid5_end_write_request;
 			rbi->bi_private = sh;
 
-			pr_debug("%s: for %llu schedule op %ld on "
+			pr_debug("%s: for %llu schedule op %lld on "
 				 "replacement disc %d\n",
 				__func__, (unsigned long long)sh->sector,
 				rbi->bi_rw, i);
@@ -747,32 +809,52 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 		if (!rdev && !rrdev) {
 			if (rw & WRITE)
 				set_bit(STRIPE_DEGRADED, &sh->state);
-			pr_debug("skip op %ld on disc %d for sector %llu\n",
+			pr_debug("skip op %lld on disc %d for sector %llu\n",
 				bi->bi_rw, i, (unsigned long long)sh->sector);
 			clear_bit(R5_LOCKED, &sh->dev[i].flags);
 			set_bit(STRIPE_HANDLE, &sh->state);
 		}
 	}
 
-	/* SW Modified */
+	/* SW Modified : Compaction of Cache Barrier Stripe */
 	for (i = disks; i--; ) {
-		if (test_and_clear_bit(R5_BarrierIO, &sh->dev[i].flags)) {
-			struct bio *bi;
-			struct md_rdev *rdev;
-			rdev = rcu_dereference(conf->disks[i].rdev);
-			bi = bio_alloc_mddev(GFP_NOIO, 0, mddev);
-			bi->bi_private = sh;
-			bi->bi_bdev = rdev->bdev;
-			bi->bi_rw = WRITE_BARRIER;
-			bi->raid_dispatch = 1;
-			bi->raid_disk_num = i;
-			bi->bi_end_io = raid5_end_write_request;
-			bio_get(bi);
-			atomic_set(&bi->dispatch_check, 0);
-			atomic_inc(&rdev->nr_pending);
-			generic_make_request(bi);
+		for (k = i; k--; ) {
+			if (barrier_array[k] == barrier_array[i])
+				barrier_array[k] = 0;
 		}
 	}
+
+	/* SW Modified : The part of patent named "Cache Barrier Stripe" */
+	for (i = disks; i--; ) {
+		if (barrier_array[i]) {
+			for (k = disks; k--; ) {
+				struct bio *bi;
+				struct md_rdev *rdev;
+				if((bdisk_num_array[i] >> k) & 1 || k == sh->pd_idx)
+					continue;
+				rdev = rcu_dereference(conf->disks[i].rdev);
+				bi = bio_alloc_mddev(GFP_NOIO, 0, mddev);
+				bi->bi_private = sh;
+				bi->bi_bdev = rdev->bdev;
+				bi->bi_rw = WRITE_BARRIER;
+				bi->raid_dispatch = 1;
+				bi->raid_disk_num = i;
+				bi->shadow_pid = barrier_array[i];
+				bi->bi_end_io = raid5_end_write_request;
+				bi->raid_epoch = raid_epoch_array[i];
+				/* SW : Need to Check and
+				 Update to another bi_end_io */
+				bio_get(bi);
+				atomic_set(&bi->dispatch_check, 0);
+				atomic_inc(&rdev->nr_pending);
+				generic_make_request(bi);
+			}
+		}
+	}
+
+	kfree(raid_epoch_array);
+	kfree(bdisk_num_array);
+	kfree(barrier_array);
 }
 
 static struct dma_async_tx_descriptor *
@@ -1295,6 +1377,7 @@ void raid_request_dispatched(struct request *req) /* SW Modified : Wake Up Page 
 		sh = bio->bi_private;
 		
 		dev = &sh->dev[bio->raid_disk_num];
+		dev->original_pid = 0;
 		wbi = NULL;
 		wbi = dev->written;
 	
@@ -1322,7 +1405,7 @@ static struct dma_async_tx_descriptor *
 ops_run_biodrain(struct stripe_head *sh, struct dma_async_tx_descriptor *tx)
 {
 	int disks = sh->disks;
-	int i, cache_barrier_stripe = 0;
+	int i;
 	struct mddev *mddev;
 
 	mddev = sh->raid_conf->mddev; 
@@ -1353,10 +1436,6 @@ ops_run_biodrain(struct stripe_head *sh, struct dma_async_tx_descriptor *tx)
 					set_bit(R5_SyncIO, &dev->flags);
 				if (wbi->bi_rw & REQ_ORDERED)
 					set_bit(R5_OrderedIO, &dev->flags);
-				if (wbi->bi_rw & REQ_BARRIER) {
-					set_bit(R5_BarrierIO, &dev->flags);
-					cache_barrier_stripe = 1;
-				}
 				if (wbi->bi_rw & REQ_DISCARD)
 					set_bit(R5_Discard, &dev->flags);
 				else
@@ -1364,23 +1443,6 @@ ops_run_biodrain(struct stripe_head *sh, struct dma_async_tx_descriptor *tx)
 						dev->sector, tx);
 				wbi = r5_next_bio(wbi, dev->sector);
 			}
-		}
-	}
-
-	/* SW Modified: Attach REQ_ORDERED flags to Parity bio */
-	for (i = disks; i--; ) {
-		struct r5dev *dev = &sh->dev[i];
-		if (test_bit(R5_OrderedIO,&dev->flags)) {
-			dev = &sh->dev[sh->pd_idx];
-			set_bit(R5_OrderedIO, &dev->flags);
-			break;
-		}
-	}
-	
-	if (cache_barrier_stripe) {
-		for (i = disks; i--; ) {
-			struct r5dev *dev = &sh->dev[i];
-			set_bit(R5_BarrierIO, &dev->flags);
 		}
 	}
 
@@ -1394,7 +1456,7 @@ static void ops_complete_reconstruct(void *stripe_head_ref)
 	int pd_idx = sh->pd_idx;
 	int qd_idx = sh->qd_idx;
 	int i;
-	bool fua = false, sync = false, discard = false;
+	bool fua = false, sync = false, discard = false, ordered = false;
 
 	pr_debug("%s: stripe %llu\n", __func__,
 		(unsigned long long)sh->sector);
@@ -1403,6 +1465,7 @@ static void ops_complete_reconstruct(void *stripe_head_ref)
 		fua |= test_bit(R5_WantFUA, &sh->dev[i].flags);
 		sync |= test_bit(R5_SyncIO, &sh->dev[i].flags);
 		discard |= test_bit(R5_Discard, &sh->dev[i].flags);
+		// ordered |= test_bit(R5_OrderedIO, &sh->dev[i].flags);
 	}
 
 	for (i = disks; i--; ) {
@@ -1415,6 +1478,8 @@ static void ops_complete_reconstruct(void *stripe_head_ref)
 				set_bit(R5_WantFUA, &dev->flags);
 			if (sync)
 				set_bit(R5_SyncIO, &dev->flags);
+			if (ordered)
+				set_bit(R5_OrderedIO, &dev->flags);
 		}
 	}
 
@@ -2021,60 +2086,62 @@ static void raid5_end_read_request(struct bio * bi, int error)
 	release_stripe(sh);
 }
 
-static void raid5_end_write_request(struct bio *bi, int error)
+void raid5_end_dbarrier_request(struct bio *bi, int error)
 {
+	struct md_rdev *uninitialized_var(rdev);
 	struct stripe_head *sh;
 	struct r5conf *conf;
 	struct mddev *mddev;
+	int disks;
+
+	if (atomic_read(&bi->dbarrier_check)) {
+	        sh = NULL;
+	        mddev = bi->bi_private;
+	        conf = mddev->private;
+	        disks = 0;
+	}
+	else {
+	        sh = bi->bi_private;
+	        conf = sh->raid_conf;
+	        mddev = conf->mddev;
+	        disks = sh->disks;
+	}
+
+	if (bi->storage_epoch && !atomic_cmpxchg(&bi->dispatch_check,0,1)) {
+        	struct storage_epoch *storage_epoch;
+        	storage_epoch = bi->storage_epoch;
+        	atomic_dec(&storage_epoch->s_e_count);
+
+        	if (atomic_read(&storage_epoch->s_e_count) == 0) {
+        		atomic_set(&storage_epoch->clear, 1);
+        	}
+	}
+        
+	if (bi->bi_phys_segments || !(bi->bi_rw & WRITE_BARRIER)) {
+		printk (KERN_ERR "[RAID SCHEDULER] (%s) struct bio is contaminated",
+			__func__);
+        	dump_stack();
+        }
+	
+	if(!bi->bi_phys_segments && bi->bi_rw & WRITE_BARRIER) {
+        	rdev = conf->disks[bi->raid_disk_num].rdev;
+        	bio_put(bi);
+        	rdev_dec_pending(rdev, conf->mddev);
+        	return;
+	}
+}
+EXPORT_SYMBOL(raid5_end_dbarrier_request);
+
+void raid5_end_write_request(struct bio *bi, int error)
+{
+	struct stripe_head *sh = bi->bi_private;
+	struct r5conf *conf = sh->raid_conf;
 	int disks = sh->disks, i;
 	struct md_rdev *uninitialized_var(rdev);
 	int uptodate = test_bit(BIO_UPTODATE, &bi->bi_flags);
 	sector_t first_bad;
 	int bad_sectors;
 	int replacement = 0;
-	struct bio *wbi = NULL;
-	struct r5dev *dev;
-	unsigned long flags, l_flags;
-
-	flags = false;
-	
-	if (atomic_read(&bi->dbarrier_check)) {
-		sh = NULL;
-		mddev = bi->bi_private;
-		conf = mddev->private;
-		disks = 0;
-	}
-	else {
-		sh = bi->bi_private;
-		conf = sh->raid_conf;
-		mddev = conf->mddev; 
-		disks = sh->disks;
-	}
-
-	if (bi->storage_epoch && !atomic_cmpxchg(&bi->dispatch_check,0,1)) {
-        	struct storage_epoch *storage_epoch;
-                storage_epoch = bi->storage_epoch;
-                atomic_dec(&storage_epoch->s_e_count);
-
-                if (atomic_read(&storage_epoch->s_e_count) == 0) {
-			atomic_set(&storage_epoch->clear, 1);
-                 }
-
-		if (!bi->bi_phys_segments && bi->bi_rw & WRITE_BARRIER) {
-			rdev = conf->disks[bi->raid_disk_num].rdev; 
-			bio_put(bi);
-			rdev_dec_pending(rdev, conf->mddev);
-			return;
-		}	
-
-	}
-	
-	if(!bi->bi_phys_segments && bi->bi_rw & WRITE_BARRIER) {
-		rdev = conf->disks[bi->raid_disk_num].rdev; 
-		bio_put(bi);
-		rdev_dec_pending(rdev, conf->mddev);
-		return;
-	}
 
 	for (i = 0 ; i < disks; i++) {
 		if (bi == &sh->dev[i].req) {
@@ -2131,34 +2198,13 @@ static void raid5_end_write_request(struct bio *bi, int error)
 	}
 	rdev_dec_pending(rdev, conf->mddev);
 
-	dev = &sh->dev[bi->raid_disk_num];
-	flags = false;
-
-	wbi = dev->written;
-
-        while (wbi && wbi->bi_sector <
-        	dev->sector + STRIPE_SECTORS) {
-		if(test_and_set_bit(R5_PGdispatch, &dev->flags))
-			break;
-
-               	__raid_request_dispatched(wbi, wbi->bi_sector, dev->sector);
-
-               	if (dispatch_bio_bh(wbi)) {
-               		wbi = r5_next_bio(wbi, dev->sector);
-               	        continue;
-               	}
-               	wbi = r5_next_bio(wbi, dev->sector);
-        }
-
-	if (dev->page)
-		end_page_dispatch(dev->page);
-
 	if (!test_and_clear_bit(R5_DOUBLE_LOCKED, &sh->dev[i].flags)) {
 		clear_bit(R5_LOCKED, &sh->dev[i].flags);
 	}
 	set_bit(STRIPE_HANDLE, &sh->state);
 	release_stripe(sh);
 }
+EXPORT_SYMBOL(raid5_end_write_request);
 
 static sector_t compute_blocknr(struct stripe_head *sh, int i, int previous);
 	
@@ -2186,7 +2232,6 @@ static void raid5_build_block(struct stripe_head *sh, int i, int previous)
 
 	dev->flags = 0;
 	dev->sector = compute_blocknr(sh, i, previous);
-	atomic_set(&dev->dispatch_flag, 1);
 }
 
 static void error(struct mddev *mddev, struct md_rdev *rdev)
@@ -2641,7 +2686,6 @@ static int add_stripe_bio(struct stripe_head *sh, struct bio *bi, int dd_idx, in
 	struct bio **bip;
 	struct r5conf *conf = sh->raid_conf;
 	int firstwrite=0;
-	pid_t check_pid;
 
 	pr_debug("adding bi b#%llu to stripe s#%llu\n",
 		(unsigned long long)bi->bi_sector,
@@ -3013,7 +3057,44 @@ static void handle_stripe_fill(struct stripe_head *sh,
 	set_bit(STRIPE_HANDLE, &sh->state);
 }
 
+/* handle_stripe_dispatch_event
+ * any written block on an uptodate or failed drive can be returned.
+ * Note that if we 'wrote' to a failed drive, it will be UPTODATE, but
+ * never LOCKED, so we don't need to test 'failed' directly.
+ */
+static void handle_stripe_dispatch_event(struct r5conf *conf,
+        struct stripe_head *sh, int disks)
+{
+        int i;
+        struct r5dev *dev;
 
+        for (i = disks; i--; ) {
+		/* SW Modified : Need to prevent executing 
+			more than one time for performance */
+                if (sh->dev[i].written) {
+                       	dev = &sh->dev[i];
+			if (!test_bit(STRIPE_CACHE_BARRIER, &sh->state)
+				|| (test_bit(STRIPE_CACHE_BARRIER, &sh->state)
+				&& !atomic_read(&dev->written->raid_epoch->dbarrier_count)))
+			if (atomic_read(&dev->req.dispatch_check)){
+                       	        /* We can return any write requests */
+                       	        struct bio *wbi;
+                       	        wbi = dev->written;
+                       	        while (wbi && wbi->bi_sector <
+                       	                dev->sector + STRIPE_SECTORS) {
+					__raid_request_dispatched(wbi,
+						wbi->bi_sector, dev->sector);
+					if (dispatch_bio_bh(wbi)) {
+						wbi = r5_next_bio(wbi, dev->sector);
+						continue;
+					}
+                       	                wbi = r5_next_bio(wbi,dev->sector);
+                       	        }
+                    	}
+		}
+	}
+	return;
+}
 /* handle_stripe_clean_event
  * any written block on an uptodate or failed drive can be returned.
  * Note that if we 'wrote' to a failed drive, it will be UPTODATE, but
@@ -3037,19 +3118,8 @@ static void handle_stripe_clean_event(struct r5conf *conf,
 				pr_debug("Return write for disc %d\n", i);
 				if (test_and_clear_bit(R5_Discard, &dev->flags))
 					clear_bit(R5_UPTODATE, &dev->flags);
-				// printk(KERN_INFO "[RAID SCHEDULER] (%s) Before Wait On Dispatch sector : %d disk_idx : %d\n",__func__, sh->sector,i);
-				wait_on_page_dispatch(sh->dev[i].page);
 				wbi = dev->written;
 				BUG_ON (!wbi);
-				clear_bit(R5_PGdispatch, &dev->flags);
-				clear_bit(R5_PGdispatch_Wb, &dev->flags);
-				clear_bit(R5_PGdispatch_Dp, &dev->flags);
-				// printk(KERN_INFO "[RAID SCHEDULER] (%s) wbi : %x sector : %d disk_idx : %d\n",__func__, wbi, sh->sector,i);
-				if (wbi->bi_rw & REQ_ORDERED && !atomic_read(&dev->dispatch_flag)) {
-					/* This Call Path is Unwanted But for Exception Handling*/
-					printk (KERN_ERR "[RAID_SCHEDULER] (%s) Dispatch Missing, Sector : %d, Disk_Idx :%d\n",__func__, sh->sector, i);
-				}
-				
 				dev->written = NULL;
 				while (wbi && wbi->bi_sector <
 					dev->sector + STRIPE_SECTORS) {
@@ -3824,9 +3894,6 @@ static void handle_stripe(struct stripe_head *sh)
 				 dev->written)) {
 				pr_debug("Writing block %d\n", i);
 				set_bit(R5_Wantwrite, &dev->flags);
-				SetPageDispatch(sh->dev[i].page);/* SW Modified */
-				barrier();
-				atomic_set(&sh->dev[i].dispatch_flag, 0);
 				if (prexor)
 					continue;
 				if (s.failed > 1)
@@ -3852,6 +3919,9 @@ static void handle_stripe(struct stripe_head *sh)
 	s.q_failed = (s.failed >= 1 && s.failed_num[0] == sh->qd_idx)
 		|| (s.failed >= 2 && s.failed_num[1] == sh->qd_idx)
 		|| conf->level < 6;
+
+	if (s.written && atomic_read(&pdev->req.dispatch_check))
+		handle_stripe_dispatch_event(conf, sh, disks);
 
 	if (s.written &&
 	    (s.p_failed || ((test_bit(R5_Insync, &pdev->flags)
@@ -4578,12 +4648,10 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 	int remaining;
 
 	/* Dummy Barrier Request */
-	/*
 	if (unlikely(atomic_read(&bi->dbarrier_check))) {
 		raid5_barrier_request(mddev, conf);
 		return;
 	}
-	*/
 	
 	if (unlikely(bi->bi_rw & REQ_FLUSH)) {
 		md_flush_request(mddev, bi);
@@ -4703,7 +4771,56 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 				goto retry;
 			}
 			finish_wait(&conf->wait_for_overlap, &w);
-	
+
+			/* SW Modified */
+			if (bi->bi_rw & REQ_ORDERED) {
+				/* Find raid epoch of this thread at master hash table */
+				struct raid_epoch *raid_epoch = NULL;
+				unsigned long flags;
+				spin_lock_irqsave(&mddev->raid_epoch_table_lock, flags);
+				hash_for_each_possible(mddev->raid_epoch_table, raid_epoch, 
+							hlist, current->pid & 0x7F) {
+					if (current->pid == raid_epoch->pid)
+						break;
+				}	
+				spin_unlock_irqrestore(&mddev->raid_epoch_table_lock, flags);
+				/* if there is no raid epoch for this thread, create new one */
+				if (!raid_epoch) {
+					raid_epoch = kmalloc(sizeof(struct raid_epoch), 
+							GFP_KERNEL);
+					
+					raid_epoch->mddev = mddev; 
+					raid_epoch->conf = conf;
+					raid_epoch->pid = current->pid; 
+					
+					raid_epoch->barrier = 0;
+					
+					raid_epoch->pending = 0; 
+					atomic_set(&raid_epoch->dbarrier_count, 0);
+					atomic_set(&raid_epoch->e_count, 1);
+					spin_lock_init(&raid_epoch->raid_epoch_lock);
+					
+					spin_lock_irqsave(&mddev->raid_epoch_table_lock, flags);
+					hash_add(mddev->raid_epoch_table, &raid_epoch->hlist, 
+							raid_epoch->pid & 0x7F);
+					spin_unlock_irqrestore(&mddev->raid_epoch_table_lock, 
+								flags);
+				}
+				
+				spin_lock_irqsave(&raid_epoch->raid_epoch_lock, flags);
+				raid_epoch->pending++;
+				spin_unlock_irqrestore(&raid_epoch->raid_epoch_lock, flags);
+				atomic_inc(&raid_epoch->e_count);
+				
+				if (bi->bi_rw & REQ_BARRIER) {
+					spin_lock_irqsave(&raid_epoch->raid_epoch_lock, flags);
+					raid_epoch->barrier = 1;
+					spin_unlock_irqrestore(&raid_epoch->raid_epoch_lock, 
+						flags);
+					atomic_dec(&raid_epoch->e_count);
+				}
+				bi->raid_epoch = raid_epoch;
+			}
 			
 			set_bit(STRIPE_HANDLE, &sh->state);
 			clear_bit(STRIPE_DELAYED, &sh->state);

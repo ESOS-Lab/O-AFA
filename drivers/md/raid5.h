@@ -328,6 +328,7 @@ enum {
 	STRIPE_OPS_REQ_PENDING,
 	STRIPE_ON_UNPLUG_LIST,
 	STRIPE_DISCARD,
+	STRIPE_CACHE_BARRIER,
 };
 
 /*
@@ -536,9 +537,12 @@ static inline int algorithm_is_DDF(int layout)
 	return layout >= 8 && layout <= 10;
 }
 extern void raid_request_dispatched(struct request *req);
+extern void release_stripe(struct stripe_head *sh);
 extern void raid_start_epoch(struct mddev *mddev);
 extern void raid_finish_epoch(struct mddev *mddev);
 extern int md_raid5_congested(struct mddev *mddev, int bits);
 extern void md_raid5_kick_device(struct r5conf *conf);
 extern int raid5_set_cache_size(struct mddev *mddev, int size);
+extern void raid5_end_write_request(struct bio *bi, int error);
+extern void raid5_end_dbarrier_request(struct bio *bi, int error);
 #endif
