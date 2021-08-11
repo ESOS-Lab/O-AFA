@@ -5470,7 +5470,6 @@ static void free_scratch_buffer(struct r5conf *conf, struct raid5_percpu *percpu
 
 static int alloc_scratch_buffer(struct r5conf *conf, struct raid5_percpu *percpu)
 {
-	printk (KERN_ERR "[RAID SCHEDULER] (%s) \n",__func__);
 	if (conf->level == 6 && !percpu->spare_page)
 		percpu->spare_page = alloc_page(GFP_KERNEL);
 	if (!percpu->scribble)
