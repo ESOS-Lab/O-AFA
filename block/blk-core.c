@@ -1553,6 +1553,12 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 	/* UFS */
 	if (bio->bi_rw & REQ_ORDERED) {
 		/* Find storage_epoch_list from hash table */
+		if (!current->epoch_set_table) {
+			printk(KERN_ERR "[STORAGE EPOCH] (%s) PID : %d No Epoch Set Table!",
+					__func__,current->pid);
+			return;
+		}
+		
 		hash_for_each_possible(current->epoch_set_table, storage_epoch_list, 
 			hlist, bio->shadow_pid & 0x7f) {
 			if (bio->shadow_pid == storage_epoch_list->pid)
@@ -1562,8 +1568,14 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 		/* if there is no matched list, create new one */
 		/* To Do : Cleaning storage_epoch_list when Process Exit */
 		if (!storage_epoch_list) {
-			storage_epoch_list = kmalloc(sizeof(struct storage_epoch_list), GFP_KERNEL); 
+			storage_epoch_list = kmalloc(sizeof(struct storage_epoch_list), 
+						GFP_KERNEL); 
 			storage_epoch_list->pid = bio->shadow_pid;
+			if (!storage_epoch_list) {
+				printk(KERN_ERR "[STORAGE EPOCH] (%s) kmalloc fail!",
+					__func__);
+				return;
+			}
 			hash_add(current->epoch_set_table, &storage_epoch_list->hlist, 
 				storage_epoch_list->pid & 0x7F);
 		}
