@@ -443,6 +443,8 @@ struct raid_epoch {
 	spinlock_t		raid_epoch_lock;
 
 	atomic_t		dbarrier_count;
+	atomic_t		finish;
+	atomic_t		clear;
 	atomic_t 		e_count;
 };
 

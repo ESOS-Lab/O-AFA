@@ -174,10 +174,8 @@ static void req_bio_endio(struct request *rq, struct bio *bio,
 	bio_advance(bio, nbytes);
 
 	/* don't actually finish bio if it's part of flush sequence */
-	if (bio->bi_size == 0 && !(rq->cmd_flags & REQ_FLUSH_SEQ)) {
-		// raid_request_dispatched(rq);
+	if (bio->bi_size == 0 && !(rq->cmd_flags & REQ_FLUSH_SEQ))
 		bio_endio(bio, error);
-	}
 }
 
 void blk_dump_rq_flags(struct request *rq, char *msg)
@@ -3243,7 +3241,7 @@ EXPORT_SYMBOL(blk_finish_plug);
 /* UFS blk functions */
 void blk_issue_barrier_plug(struct blk_plug *plug)
 {
-	blk_finish_epoch(1);
+	// blk_finish_epoch(1);
 }
 EXPORT_SYMBOL(blk_issue_barrier_plug);
 
@@ -3268,27 +3266,14 @@ void blk_request_dispatched(struct request *req)
 			if (bio->storage_epoch) {
 				struct storage_epoch *storage_epoch;
 				storage_epoch = bio->storage_epoch;
-				//printk (KERN_INFO "[STORAGE EPOCH] (%s) PID : %d Device : %p Dec Epoch Count : %d\n"
+				//printk (KERN_INFO "[STORAGE EPOCH] (%s) PID : %d Device "
+				//	": %p Dec Epoch Count : %d\n"
 				//	,__func__, current->pid,storage_epoch->q, 
 				//	(int) atomic_read(&storage_epoch->s_e_count) - 1);
 				if (atomic_dec_and_test(&storage_epoch->s_e_count))
 					atomic_set(&storage_epoch->clear, 1);
 				}
 
-			if (bio->bi_end_io == raid5_end_dbarrier_request
-				&& !atomic_cmpxchg(&bio->dispatch_check, 0, 1)) {
-				struct stripe_head *sh = bio->bi_private;
-				atomic_dec(&bio->raid_epoch->dbarrier_count);	
-				set_bit(STRIPE_HANDLE, &sh->state);
-				release_stripe(sh);	
-			}
-		}
-
-		if (bio->bi_end_io == raid5_end_write_request
-			&& !atomic_cmpxchg(&bio->dispatch_check, 0, 1)) {
-			struct stripe_head *sh = bio->bi_private;
-			set_bit(STRIPE_HANDLE, &sh->state);
-			release_stripe(sh);	
 		}
 
 		for (i=0; i < bio->bi_vcnt; i++) {
@@ -3305,115 +3290,10 @@ void blk_request_dispatched(struct request *req)
 
 		req_bio = bio->bi_next;
 	}
-	
 	// raid_request_dispatched(req);
 }
 
 EXPORT_SYMBOL(blk_request_dispatched);
-
-void blk_start_new_epoch(struct request_queue *q)
-{
-	/*
-	struct epoch *epoch = current->epoch;
-
-	if (!epoch) {
-	        epoch = mempool_alloc(q->epoch_pool, GFP_NOFS);	
-	} else if (epoch->pending != 0) {
-                epoch->barrier = 1;		
-	        epoch = mempool_alloc(q->epoch_pool, GFP_NOFS);	
-	} else if (epoch->pending == 0  && epoch->dispatch == epoch->complete) {
-	} else
-	        epoch = mempool_alloc(q->epoch_pool, GFP_NOFS);	
-	
-	
-	epoch->task = current;
-	epoch->q = q;
-	epoch->barrier = 0;
-	epoch->pending = 0;
-	epoch->dispatch = 0;
-	epoch->complete = 0;
-	epoch->error = 0;
-	epoch->error_flags = 0;
-
-	current->epoch = epoch;	
-	*/
-}
-EXPORT_SYMBOL(blk_start_new_epoch);
-
-void blk_start_epoch(struct request_queue *q)
-{
-	// struct epoch *epoch = current->__epoch;
-
-	// if (epoch) {
-	//  printk(KERN_ERR "UFS: %s: unfinished epoch!\n", __func__);
-	//  return;
-	// }
-	/*
-	epoch = mempool_alloc(q->epoch_pool, GFP_NOFS);	
-	
-	if (!epoch) {
-	  printk(KERN_ERR "UFS: %s: epoch alloc failed!\n", __func__);
-	  return;
-	}
-	memset(epoch, 0, sizeof(struct epoch));
-	epoch->task = current;
-	printk (KERN_INFO "[STORAGE SCHEDULER] (%s) epoch->task :%x\n",__func__, epoch->task);
-	if (!epoch->task)
-		printk (KERN_ERR "[STORAGE SCHEDULER] (%s) Critical Errror ! epoch->task :%x\n",__func__, epoch->task);
-	epoch->q = q;
-
-	epoch->barrier = 0;
-	epoch->pending = 0;
-	epoch->dispatch = 0;
-	epoch->complete = 0;
-	epoch->error = 0;
-	epoch->error_flags = 0;
-	*/
-	/* SW Modified */
-	//INIT_LIST_HEAD(&epoch->storage_list);
-	//spin_lock_init(&epoch->list_lock);
-	// atomic_set(&epoch->enable, 0);
-
-	// get_epoch(epoch);
-
-	//current->__epoch = epoch;	
-
-
-}
-EXPORT_SYMBOL(blk_start_epoch);
-
-void blk_finish_epoch(int enable)
-{
-	// struct epoch *epoch = current->__epoch;
-	/* SW Modified */
-	/*
-	struct storage_epoch *storage_epoch = NULL;
-	struct list_head *ptr; //, *ptrn;
-	unsigned long flags;
-
-	spin_lock_irqsave(&current->list_lock, flags);
-	list_for_each(ptr, &current->storage_list) {
-		storage_epoch = list_entry(ptr, struct storage_epoch, list);
-		atomic_dec(&storage_epoch->s_e_count);
-		if (storage_epoch->pending) {
-			storage_epoch->barrier = 1;
-		}
-		else
-			storage_epoch->task->barrier_fail = 1;
-		if (atomic_read(&storage_epoch->s_e_count) == 0)
-			printk (KERN_ERR "[STORAGE SCHEDULER] (%s) Corner Case Occur!\n",__func__);
-	}
-	spin_unlock_irqrestore(&current->list_lock, flags);
-
-	if (!storage_epoch) {
-	        printk(KERN_ERR "UFS: %s: unstarted epoch!\n", __func__);
-		return;
-	}	
-	*/
-}
-EXPORT_SYMBOL(blk_finish_epoch);
-
-
 
 #ifdef CONFIG_PM_RUNTIME
 /**

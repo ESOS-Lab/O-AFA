@@ -376,7 +376,8 @@ void elv_dispatch_sort(struct request_queue *q, struct request *rq)
 				struct storage_epoch *storage_epoch = bio->storage_epoch;
 				spin_lock_irqsave(&storage_epoch->s_e_lock,flags);
 				if (storage_epoch->q != q) {
-					printk (KERN_ERR "[STORAGE SCHEDULER] (%s) Request Queue is Not Matched!, Disk Idx :%d\n"
+					printk (KERN_ERR "[STORAGE SCHEDULER] (%s) "
+						"Request Queue is Not Matched!, Disk Idx :%d\n"
 						,__func__, bio->raid_disk_num);
 					break;
 				}

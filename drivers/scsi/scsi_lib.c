@@ -1543,7 +1543,6 @@ static void scsi_request_fn(struct request_queue *q)
 	struct request *req;
 
         struct bio *req_bio;
-        struct stripe_head *sh;
 
 	if(!get_device(&sdev->sdev_gendev))
 		/* We must be tearing the block queue down already */
@@ -1640,6 +1639,7 @@ static void scsi_request_fn(struct request_queue *q)
 		/* UFS */
 		//if (req->cmd_bflags & REQ_ORDERED)
 		blk_request_dispatched(req);
+		raid_request_dispatched(req);
 	}
 
 	goto out;

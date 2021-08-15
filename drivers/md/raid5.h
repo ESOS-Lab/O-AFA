@@ -197,6 +197,7 @@ enum reconstruct_states {
 struct stripe_head {
 	struct hlist_node	hash;
 	struct list_head	lru;	      /* inactive_list or handle_list */
+	struct list_head	dlist;		/* dispatch_list */
 	struct r5conf		*raid_conf;
 	short			generation;	/* increments with every
 						 * reshape */
@@ -329,6 +330,7 @@ enum {
 	STRIPE_ON_UNPLUG_LIST,
 	STRIPE_DISCARD,
 	STRIPE_CACHE_BARRIER,
+	STRIPE_DISPATCH,
 };
 
 /*
