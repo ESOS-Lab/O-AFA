@@ -1639,7 +1639,6 @@ static void scsi_request_fn(struct request_queue *q)
 		/* UFS */
 		//if (req->cmd_bflags & REQ_ORDERED)
 		blk_request_dispatched(req);
-		raid_request_dispatched(req);
 	}
 
 	goto out;
