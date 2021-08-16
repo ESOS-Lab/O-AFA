@@ -822,7 +822,6 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 	}
 
 	/* SW Modified : The part of patent named "Cache Barrier Stripe" */
-	/*
 	for (i = disks; i--; ) {
 		if (barrier_array[i]) {
 			for (k = disks; k--; ) {
@@ -855,7 +854,6 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 			}
 		}
 	}
-	*/
 	kfree(raid_epoch_array);
 	kfree(bdisk_num_array);
 	kfree(barrier_array);
@@ -1373,12 +1371,20 @@ void raid_request_dispatched(struct request *req)
 					for (i = sh->disks; i--;) {
         					if (i == sh->pd_idx) 
 							continue;
+						printk(KERN_INFO "[RAID EPOCH] (%s) PID : %d "
+								"Db_Count : %d"
+								" %llu : %d "
+								,__func__, bio->shadow_pid,
+						atomic_read(&bio->raid_epoch->dbarrier_count)
+						,(unsigned long long) sh->sector, 
+						bio->raid_disk_num);
+
 						dev = &sh->dev[i];                    
         					wbi = dev->written;                               
         					while (wbi && wbi->bi_sector <               
                 					dev->sector + STRIPE_SECTORS                 
                 					&& atomic_read(&dev->req.dispatch_check)) {  
-                					__raid_request_dispatched(wbi,                
+                					__raid_request_dispatched(wbi,               
                         				wbi->bi_sector, dev->sector);               
                 					if (dispatch_bio_bh(wbi)) {                  
                         					wbi = r5_next_bio(wbi, dev->sector); 
