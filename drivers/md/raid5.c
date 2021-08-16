@@ -1394,8 +1394,8 @@ void raid_request_dispatched(struct request *req)
         					}                                            
 					}
 				}
-				continue;
 			}
+			req_bio = bio->bi_next;
 			continue;
 		}
 
