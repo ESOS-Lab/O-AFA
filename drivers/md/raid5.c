@@ -550,7 +550,7 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 {
 	struct r5conf *conf = sh->raid_conf;
 	struct mddev *mddev = conf->mddev;
-	int i, k, disks = sh->disks;
+	int i, k, j, disks = sh->disks;
 	unsigned long flags;
 	unsigned long long *bdisk_num_array = NULL, *barrier_array = NULL;
 	struct raid_epoch **raid_epoch_array = NULL;
@@ -574,6 +574,14 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 			unsigned int count = 0;
         		if (test_bit(R5_OrderedIO, &sh->dev[i].flags) && obi) { 
 				raid_epoch = obi->raid_epoch;
+				if (!raid_epoch) {
+					for (j = 0; j < 1000000000000; ++j) {
+						if (j % 10000 == 0)
+							printk (KERN_ERR "[RAID EPOCH] (%s)"
+								" Null Pointer Dereference!"
+								,__func__);
+					}
+				}
 				spin_lock_irqsave(&raid_epoch->raid_epoch_lock, flags);
 				if (raid_epoch->barrier) {
 					for (k = i + 1; k--; ) {
@@ -822,6 +830,7 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 	}
 
 	/* SW Modified : The part of patent named "Cache Barrier Stripe" */
+	/*
 	for (i = disks; i--; ) {
 		if (barrier_array[i]) {
 			for (k = disks; k--; ) {
@@ -854,6 +863,7 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 			}
 		}
 	}
+	*/
 	kfree(raid_epoch_array);
 	kfree(bdisk_num_array);
 	kfree(barrier_array);

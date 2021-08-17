@@ -1560,9 +1560,9 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 		hash_for_each_possible(current->epoch_set_table, storage_epoch_list, 
 			hlist, bio->shadow_pid & 0x7f) {
 			if (bio->shadow_pid == storage_epoch_list->pid) {
-				//printk(KERN_INFO 
-				//	"[STORAGE EPOCH] (%s) PID : %d Find Epoch List : %p\n"
-				//	,__func__, current->pid, storage_epoch_list);	
+				printk(KERN_INFO 
+					"[STORAGE EPOCH] (%s) PID : %d Find Epoch List : %p\n"
+					,__func__, current->pid, storage_epoch_list);	
 				break;
 			}
 		}
@@ -1581,8 +1581,8 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 			}
 			hash_add(current->epoch_set_table, &storage_epoch_list->hlist, 
 				storage_epoch_list->pid & 0x7F);
-			//printk(KERN_INFO "[STORAGE EPOCH] (%s) PID : %d Allocate Epoch List\n"
-			//		,__func__, current->pid);
+			printk(KERN_INFO "[STORAGE EPOCH] (%s) PID : %d Allocate Epoch List\n"
+					,__func__, current->pid);
 		}
 
 		/* Do Cleaning Finished Storage Epoch which is reserved at IRQ Handler */
@@ -1601,15 +1601,15 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 			storage_epoch = list_entry(ptr, struct storage_epoch, list);
 			if (storage_epoch->q == q && !atomic_read(&storage_epoch->finish)) {
 				find = 1;
-				//printk(KERN_INFO "[STORAGE EPOCH] (%s) PID : %d Find Storage Epoch\n"						,__func__, current->pid);
+				printk(KERN_INFO "[STORAGE EPOCH] (%s) PID : %d Find Storage Epoch\n"						,__func__, current->pid);
 				break;
 			}
 		}
 		
 		/* if there is no epoch, Start new epoch */
 		if (!find) {
-			// printk (KERN_INFO "[STORAGE EPOCH] (%s) PID :%d Start Storage Epoch\n",
-			//	__func__, current->pid);
+			printk (KERN_INFO "[STORAGE EPOCH] (%s) PID :%d Start Storage Epoch\n",
+				__func__, current->pid);
 			storage_epoch = kmalloc(sizeof(struct storage_epoch),GFP_KERNEL);
 			memset(storage_epoch, 0, sizeof(struct storage_epoch));
 			storage_epoch->task = current;
@@ -1632,23 +1632,23 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 		}
 
 		atomic_inc(&storage_epoch->s_e_count);
-		//printk (KERN_INFO "[STORAGE EPOCH] (%s) PID : %d Device : %p Inc Epoch Count : %d\n"
-		//			,__func__, current->pid, storage_epoch->q, 
-		//			atomic_read(&storage_epoch->s_e_count));
+		printk (KERN_INFO "[STORAGE EPOCH] (%s) PID : %d Device : %p Inc Epoch Count : %d\n"
+					,__func__, current->pid, storage_epoch->q, 
+					atomic_read(&storage_epoch->s_e_count));
 
 		bio->storage_epoch = storage_epoch;
 		spin_lock_irqsave(&storage_epoch->s_e_lock, flags);
 		storage_epoch->pending++;
 	
 		if (bio->bi_rw & REQ_BARRIER) {
-			//printk (KERN_INFO "[STORAGE EPOCH] (%s) PID : %d Finish Storage Epoch\n"
-			//		,__func__, current->pid);
+			printk (KERN_INFO "[STORAGE EPOCH] (%s) PID : %d Finish Storage Epoch\n"
+					,__func__, current->pid);
 			storage_epoch->barrier = 1;
 			atomic_set(&storage_epoch->finish, 1);
 			atomic_dec(&storage_epoch->s_e_count);
-			//printk (KERN_INFO "[STORAGE EPOCH] (%s) PID : %d Dec Epoch Count : %d\n"
-			//			,__func__, current->pid, 
-			//			atomic_read(&storage_epoch->s_e_count));
+			printk (KERN_INFO "[STORAGE EPOCH] (%s) PID : %d Dec Epoch Count : %d\n"
+						,__func__, current->pid, 
+						atomic_read(&storage_epoch->s_e_count));
 		}
 		
 		spin_unlock_irqrestore(&storage_epoch->s_e_lock, flags);
@@ -3266,12 +3266,15 @@ void blk_request_dispatched(struct request *req)
 			if (bio->storage_epoch) {
 				struct storage_epoch *storage_epoch;
 				storage_epoch = bio->storage_epoch;
-				//printk (KERN_INFO "[STORAGE EPOCH] (%s) PID : %d Device "
-				//	": %p Dec Epoch Count : %d\n"
-				//	,__func__, current->pid,storage_epoch->q, 
-				//	(int) atomic_read(&storage_epoch->s_e_count) - 1);
+				printk (KERN_INFO "[STORAGE EPOCH] (%s) PID : %d Device "
+					": %p Dec Epoch Count : %d\n"
+					,__func__, current->pid,storage_epoch->q, 
+					(int) atomic_read(&storage_epoch->s_e_count) - 1);
 				if (atomic_dec_and_test(&storage_epoch->s_e_count))
 					atomic_set(&storage_epoch->clear, 1);
+					printk(KERN_INFO "[STORAGE EPOCH] (%s) PID : %d "
+						"Device : %p ClearEpoch!\n"
+						,__func__, current->pid, storage_epoch->q);
 				}
 
 		}
