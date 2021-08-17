@@ -107,10 +107,7 @@ struct epoch {
 	unsigned int error_flags;
 
         atomic_t e_count;
-	atomic_t enable;
 	
-	struct list_head storage_list;
-	spinlock_t list_lock;
 	//struct list_head list;
 };
 
@@ -1480,13 +1477,10 @@ struct task_struct {
 	unsigned int	sequential_io_avg;
 #endif
 	/* UFS: epoch structure for task */
-	// struct list_head storage_list;
-	// spinlock_t list_lock;
 	struct epoch *epoch;
         struct epoch *__epoch;
 	unsigned int barrier_fail;
 	unsigned int epoch_fail;
-	// atomic_t epoch_enable;
 	//struct list_head epoch_pending;
 	//struct list_head epoch_dispatch;
 	//struct list_head epoch_complte;

@@ -374,9 +374,15 @@ void elv_dispatch_sort(struct request_queue *q, struct request *rq)
 			struct bio *bio = req_bio;
 			if (bio->storage_epoch) {
 				struct storage_epoch *storage_epoch = bio->storage_epoch;
+				if (atomic_read(&storage_epoch->clear))
+					panic("[STORAGE SCHEDULER] (%s) "
+						"Storage Epoch is already Freed!"
+						"Sector : %llu"
+						,__func__
+						, (unsigned long long)bio->bi_sector);
 				spin_lock_irqsave(&storage_epoch->s_e_lock,flags);
 				if (storage_epoch->q != q) {
-					printk (KERN_ERR "[STORAGE SCHEDULER] (%s) "
+					panic ("[STORAGE SCHEDULER] (%s) "
 						"Request Queue is Not Matched!, Disk Idx :%d\n"
 						,__func__, bio->raid_disk_num);
 					break;

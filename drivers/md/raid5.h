@@ -197,7 +197,6 @@ enum reconstruct_states {
 struct stripe_head {
 	struct hlist_node	hash;
 	struct list_head	lru;	      /* inactive_list or handle_list */
-	struct list_head	dlist;		/* dispatch_list */
 	struct r5conf		*raid_conf;
 	short			generation;	/* increments with every
 						 * reshape */
@@ -233,8 +232,6 @@ struct stripe_head {
 		struct bio	*toread, *read, *towrite, *written;
 		sector_t	sector;			/* sector of this page */
 		unsigned long	flags;
-		pid_t		original_pid; 		/* Avoid two epoch scheduler 
-							share one page, protected by stripe_lock */
 	} dev[1]; /* allocated with extra space depending of RAID geometry */
 };
 
@@ -300,9 +297,6 @@ enum r5dev_flags {
 	R5_Discard,	/* Discard the stripe */
 	R5_OrderedIO,   /* SW Modified */
 	R5_BarrierIO,
-	R5_PGdispatch,  /* SW Modified, Give One more opportunity at raid5_write_end_request() */
-	R5_PGdispatch_Wb, /* Debugging Purporse */
-	R5_PGdispatch_Dp, /* Debugging Purporse */
 };
 
 /*
@@ -464,10 +458,7 @@ struct r5conf {
 	spinlock_t		device_lock;
 	struct disk_info	*disks;
 	
-	/* SW Modified */
-//	mempool_t 		*raid_epoch_pool;
 	int			node;
-	//mempool_t *raid_epoch_link_pool;
 
 	/* When taking over an array from a different personality, we store
 	 * the new thread here until we fully activate the array.
@@ -540,8 +531,6 @@ static inline int algorithm_is_DDF(int layout)
 }
 extern void raid_request_dispatched(struct request *req);
 extern void release_stripe(struct stripe_head *sh);
-extern void raid_start_epoch(struct mddev *mddev);
-extern void raid_finish_epoch(struct mddev *mddev);
 extern int md_raid5_congested(struct mddev *mddev, int bits);
 extern void md_raid5_kick_device(struct r5conf *conf);
 extern int raid5_set_cache_size(struct mddev *mddev, int size);

@@ -75,9 +75,6 @@ static DECLARE_WAIT_QUEUE_HEAD(resync_wait);
 static struct workqueue_struct *md_wq;
 static struct workqueue_struct *md_misc_wq;
 
-struct kmem_cache *raid_epoch_cachep; /* SW Modified */
-// struct kmem_cache *raid_epoch_link_cachep;
-
 static int remove_and_add_spares(struct mddev *mddev,
 				 struct md_rdev *this);
 

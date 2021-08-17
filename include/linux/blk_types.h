@@ -91,9 +91,6 @@ struct bio {
 	atomic_t		dispatch_check; /* SW Modified */
 	atomic_t		dbarrier_check; /* SW Modified */
 	pid_t			shadow_pid; /* SW Modified */
-	unsigned int 		multiple_pid; /* SW Modified */
-	struct list_head	raid_epoch_list; /* For Parity Page Handling */
-	struct list_head	storage_epoch_list; 
 
 	struct bio_vec		*bi_io_vec;	/* the actual vec list */
 

@@ -276,7 +276,6 @@ void bio_init(struct bio *bio)
 	atomic_set(&bio->bi_cnt, 1);
 	atomic_set(&bio->dispatch_check, 0); /* SW Modified */
 	atomic_set(&bio->dbarrier_check, 0); /* SW Modified */
-	bio->multiple_pid = 0;
 }
 EXPORT_SYMBOL(bio_init);
 

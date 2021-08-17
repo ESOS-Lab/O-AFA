@@ -1410,7 +1410,6 @@ void raid_request_dispatched(struct request *req)
 		sh = bio->bi_private;
 		dev = &sh->dev[bio->raid_disk_num];
 		pdev = &sh->dev[sh->pd_idx];
-		dev->original_pid = 0;
                 wbi = NULL;
                 wbi = dev->written;
 
@@ -2359,13 +2358,12 @@ void raid5_end_write_request(struct bio *bi, int error)
 	dev = &sh->dev[bi->raid_disk_num];
 	wbi = dev->written;
 	pdev = &sh->dev[sh->pd_idx];
-	dev->original_pid = 0;
 	
 	if (wbi && wbi->bi_rw & REQ_ORDERED && wbi->raid_epoch
 	        && !atomic_cmpxchg(&bi->dispatch_check, 0, 1)) {
 	        // Need to check the case in which
 	        //        same sector has double wbi 
-		printk(KERN_INFO "[RAID EPOCH] (%s) wbi : %p\n wbi->raid_epoch : %p\n" 
+		printk(KERN_INFO "[RAID EPOCH] (%s) wbi : %p wbi->raid_epoch : %p " 
 				"Count Addr : %p\n",
 				__func__,wbi, wbi->raid_epoch, &wbi->raid_epoch->e_count);
 	        if (atomic_dec_and_test(&wbi->raid_epoch->e_count)){
@@ -2895,7 +2893,7 @@ static int add_stripe_bio(struct stripe_head *sh, struct bio *bi, int dd_idx, in
 		bip = &sh->dev[dd_idx].towrite;
 		if (*bip == NULL)
 			firstwrite = 1;
-		if (*bip && current->pid != sh->dev[dd_idx].original_pid) /* SW Modified */
+		if (*bip && current->pid != (*bip)->shadow_pid) /* SW Modified */
 			goto overlap;
 	} else
 		bip = &sh->dev[dd_idx].toread;
@@ -2912,6 +2910,7 @@ static int add_stripe_bio(struct stripe_head *sh, struct bio *bi, int dd_idx, in
 	if (*bip)
 		bi->bi_next = *bip;
 	*bip = bi;
+	(*bip)->shadow_pid = current->pid;
 	raid5_inc_bi_active_stripes(bi);
 
 	if (forwrite) {
@@ -2927,9 +2926,6 @@ static int add_stripe_bio(struct stripe_head *sh, struct bio *bi, int dd_idx, in
 		if (sector >= sh->dev[dd_idx].sector + STRIPE_SECTORS)
 			set_bit(R5_OVERWRITE, &sh->dev[dd_idx].flags);
 	}
-
-	if (likely(firstwrite))
-		sh->dev[dd_idx].original_pid = current->pid;
 
 	pr_debug("added bi b#%llu to stripe s#%llu, disk %d.\n",
 		(unsigned long long)(*bip)->bi_sector,
@@ -5006,7 +5002,7 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 						,__func__, raid_epoch, current->pid,
 						(unsigned long long) sh->sector, dd_idx);
 				bi->raid_epoch = raid_epoch;
-				bi->shadow_pid = current->pid;
+				// bi->shadow_pid = current->pid;
 			}
 			
 			set_bit(STRIPE_HANDLE, &sh->state);
@@ -7044,75 +7040,6 @@ static void *raid6_takeover(struct mddev *mddev)
 	mddev->raid_disks += 1;
 	return setup_conf(mddev);
 }
-
-/* SW Modified
-void raid_start_epoch(struct mddev *mddev) 
-{
-	struct raid_epoch *raid_epoch = mddev->__raid_epoch;
-	struct r5conf *conf = mddev->private;
-
-	if (!conf) {
-		printk(KERN_ERR "[SWDEBUG] (%s): R5 Need to be setup!\n",__func__);
-		return;
-	}
-
-	if (raid_epoch) {
-		printk(KERN_ERR "[SWDEBUG] (%s): unfinished raid epoch!\n", __func__);
-		return;
-	}
-
-	raid_epoch = mempool_alloc(conf->raid_epoch_pool, GFP_NOFS);
-
-	if(!raid_epoch) {
-		printk(KERN_ERR "[SWDEBUG] (%s): raid epoch alloc failed\n",__func__);
-		return;
-	}
-
-	memset(raid_epoch, 0, sizeof(struct raid_epoch));
-	
-	raid_epoch->mddev = mddev;
-	raid_epoch->conf = conf;
-
-	raid_epoch->barrier = 0;
-	atomic_set(&raid_epoch->pending,0);
-	raid_epoch->dispatch = 0;
-	atomic_set(&raid_epoch->complete,0);
-	raid_epoch->error = 0;
-	raid_epoch->error_flags = 0;
-
-	get_raid_epoch(raid_epoch);
-
-	mddev->__raid_epoch = raid_epoch;
-}
-EXPORT_SYMBOL(raid_start_epoch);
-*/
-
-/*
-void raid_finish_epoch(struct mddev *mddev) 
-{
-	struct raid_epoch *raid_epoch = mddev->__raid_epoch;
-
-	if (!raid_epoch) {
-		printk(KERN_ERR "[SWDEBUG] (%s): unstarted raid epoch!\n",__func__);
-		return;
-	}
-	if (atomic_read(&raid_epoch->pending) == 0) {
-		printk(KERN_ERR "[SWDEBUG] (%s): barrier fail!\n",__func__);
-		//raid_epoch->barrier = 1;
-	}
-	else
-		raid_epoch->barrier = 1;
-
-	put_raid_epoch(raid_epoch);
-
-	if(atomic_read(&raid_epoch->e_count) == 0) {
-		printk(KERN_ERR "[SWDEBUG] (%s): Corner Case Occur: My guess is fdatabarrier!\n",__func__);
-		mempool_free(raid_epoch, raid_epoch->conf->raid_epoch_pool);
-	        mddev->__raid_epoch = 0;
-	}
-}
-EXPORT_SYMBOL(raid_finish_epoch);
-*/
 
 static struct md_personality raid6_personality =
 {

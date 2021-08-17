@@ -3266,17 +3266,17 @@ void blk_request_dispatched(struct request *req)
 			if (bio->storage_epoch) {
 				struct storage_epoch *storage_epoch;
 				storage_epoch = bio->storage_epoch;
-				printk (KERN_INFO "[STORAGE EPOCH] (%s) PID : %d Device "
-					": %p Dec Epoch Count : %d\n"
-					,__func__, current->pid,storage_epoch->q, 
-					(int) atomic_read(&storage_epoch->s_e_count) - 1);
-				if (atomic_dec_and_test(&storage_epoch->s_e_count))
+				if (atomic_dec_and_test(&storage_epoch->s_e_count)) {
 					atomic_set(&storage_epoch->clear, 1);
 					printk(KERN_INFO "[STORAGE EPOCH] (%s) PID : %d "
 						"Device : %p ClearEpoch!\n"
 						,__func__, current->pid, storage_epoch->q);
 				}
-
+				printk (KERN_INFO "[STORAGE EPOCH] (%s) PID : %d Device "
+					": %p Dec Epoch Count : %d\n"
+					,__func__, current->pid,storage_epoch->q, 
+					(int) atomic_read(&storage_epoch->s_e_count));
+				}
 		}
 
 		for (i=0; i < bio->bi_vcnt; i++) {
