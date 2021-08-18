@@ -3242,7 +3242,38 @@ EXPORT_SYMBOL(blk_finish_plug);
 /* UFS blk functions */
 void blk_issue_barrier_plug(struct blk_plug *plug)
 {
-	// blk_finish_epoch(1);
+	/* SW Modified */
+	/*
+	unsigned long flags;
+	struct storage_epoch_list *storage_epoch_list = NULL;
+	struct storage_epoch *storage_epoch = NULL;
+	struct list_had *ptr, *ptrn;
+	
+	if(current->epoch_set_table) {                                                      
+        	hash_for_each_possible(current->epoch_set_table, 
+			storage_epoch_list, hlist, current->pid & 0x7F) {
+				if (current->pid == storage_epoch->pid)
+					break;
+                        	}                                                           
+                	}                                                                   
+	}                                                                                   
+	else {                                                                              
+	        panic("No Epoch Set Table!!")                                               
+	}                                                                                   
+        list_for_each_safe(ptr, ptrn, &storage_epoch_list->slist) {  
+        	struct storage_epoch *storage_epoch_element = NULL  
+                storage_epoch_element = list_entry(ptr, struct storage_epoch, list);
+		spin_lock_irqsave(&storage_epoch_element->s_e_lock, flags);
+		if(storage_epoch->pending) {
+			storage_epoch->barrier = 1;
+			atomic_set(&storage_epoch_element->finish, 1);
+			atomic_dec(&storage_epoch_element->s_e_count);
+		}
+		else
+			current->barrier_fail = 1;
+		spin_unlock_irqrestore(&storage_epoch_element->s_e_lock, flags);
+	}
+	*/
 }
 EXPORT_SYMBOL(blk_issue_barrier_plug);
 

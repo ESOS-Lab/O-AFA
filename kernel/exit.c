@@ -53,6 +53,7 @@
 #include <linux/oom.h>
 #include <linux/writeback.h>
 #include <linux/shm.h>
+#include <linux/hashtable.h>
 
 #include <asm/uaccess.h>
 #include <asm/unistd.h>
@@ -715,7 +716,8 @@ static inline void check_stack_usage(void) {}
 void do_exit(long code)
 {
 	struct task_struct *tsk = current;
-	int group_dead;
+	int group_dead, i;
+	struct hlist_node *tmp;
 
 	profile_task_exit(tsk);
 
@@ -802,6 +804,30 @@ void do_exit(long code)
 	exit_shm(tsk);
 	exit_files(tsk);
 	exit_fs(tsk);
+	/* SW Modified */
+	/* Retrieve All Epoch used by this task */
+	/*
+	if(current->epoch_set_table) {
+		hash_for_each_safe(tsk->epoch_set_table, i, tmp,
+			storage_epoch_list, hlist) {
+				list_for_each_safe(ptr, ptrn, &storage_epoch_list->slist) {
+					struct storage_epoch *storage_epoch_element = NULL
+					storage_epoch_element = list_entry(ptr,
+								struct storage_epoch, list);
+					if (atomic_read(&storage_epoch_element->clear)) {
+						list_del(ptr);
+						kfree(storage_epoch_element);
+					}
+					else
+						panic("Unfinished Epoch!");
+				}	
+			}
+	}
+	else {
+		panic("No Epoch Set Table!!")
+	}
+	*/
+
 	if (group_dead)
 		disassociate_ctty(1);
 	exit_task_namespaces(tsk);
