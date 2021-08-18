@@ -4965,7 +4965,6 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 					}
 				}	
 
-				spin_unlock_irqrestore(&mddev->raid_epoch_table_lock, flags);
 				/* if there is no raid epoch for this thread, create new one */
 				if (!raid_epoch) {
 					// printk(KERN_INFO "[RAID EPOCH] (%s) PID : %d Alloc New Epoch\n"
@@ -4986,16 +4985,13 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 					atomic_set(&raid_epoch->e_count, 1);
 					spin_lock_init(&raid_epoch->raid_epoch_lock);
 					
-					spin_lock_irqsave(&mddev->raid_epoch_table_lock, flags);
 					hash_add(mddev->raid_epoch_table, &raid_epoch->hlist, 
 							raid_epoch->pid & 0x7F);
-					spin_unlock_irqrestore(&mddev->raid_epoch_table_lock, 
-								flags);
 				}
+				spin_unlock_irqrestore(&mddev->raid_epoch_table_lock, flags);
 				
 				spin_lock_irqsave(&raid_epoch->raid_epoch_lock, flags);
 				raid_epoch->pending++;
-				spin_unlock_irqrestore(&raid_epoch->raid_epoch_lock, flags);
 				atomic_inc(&raid_epoch->e_count);
 				// printk(KERN_INFO "[RAID EPOCH] (%s) PID : %d %llu : %d E_Count : %d\n"
 				//		,__func__, current->pid, 
