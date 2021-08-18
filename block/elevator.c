@@ -367,6 +367,7 @@ void elv_dispatch_sort(struct request_queue *q, struct request *rq)
 	boundary = q->end_sector;
 	stop_flags = REQ_SOFTBARRIER | REQ_STARTED;
 
+	/*
 	if (rq->cmd_bflags & REQ_ORDERED) {
 		struct bio *req_bio;
 		req_bio = rq->bio;
@@ -397,6 +398,7 @@ void elv_dispatch_sort(struct request_queue *q, struct request *rq)
 			req_bio = bio->bi_next;
 		}
 	}
+	*/
 
 	list_for_each_prev(entry, &q->queue_head) {
 		struct request *pos = list_entry_rq(entry);

@@ -1549,8 +1549,9 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 	}
 
 	/* UFS */
+	/*
 	if (bio->bi_rw & REQ_ORDERED) {
-		/* Find storage_epoch_list from hash table */
+		// Find storage_epoch_list from hash table 
 		if (!current->epoch_set_table) {
 			printk(KERN_ERR "[STORAGE EPOCH] (%s) PID : %d No Epoch Set Table!\n",
 					__func__,current->pid);
@@ -1567,8 +1568,8 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 			}
 		}
 
-		/* if there is no matched list, create new one */
-		/* To Do : Cleaning storage_epoch_list when Process Exit */
+		// if there is no matched list, create new one 
+		// To Do : Cleaning storage_epoch_list when Process Exit 
 		if (!storage_epoch_list) {
 			storage_epoch_list = kmalloc(sizeof(struct storage_epoch_list), 
 						GFP_KERNEL); 
@@ -1585,8 +1586,8 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 					,__func__, current->pid);
 		}
 
-		/* Do Cleaning Finished Storage Epoch which is reserved at IRQ Handler */
-		/* To Do : Cleaning storage_epoch when Process Exit */
+		// Do Cleaning Finished Storage Epoch which is reserved at IRQ Handler 
+		// To Do : Cleaning storage_epoch when Process Exit 
 		list_for_each_safe(ptr, ptrn, &storage_epoch_list->slist) {
 			struct storage_epoch *storage_epoch_element = NULL; 
 			storage_epoch_element = list_entry(ptr, struct storage_epoch, list);
@@ -1596,7 +1597,7 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 			}
 		}
 	
-		/* Find Corresponding Epoch from list */
+		// Find Corresponding Epoch from list 
 		list_for_each(ptr, &storage_epoch_list->slist) {
 			storage_epoch = list_entry(ptr, struct storage_epoch, list);
 			if (storage_epoch->q == q && !atomic_read(&storage_epoch->finish)) {
@@ -1606,7 +1607,7 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 			}
 		}
 		
-		/* if there is no epoch, Start new epoch */
+		// if there is no epoch, Start new epoch 
 		if (!find) {
 			printk (KERN_INFO "[STORAGE EPOCH] (%s) PID :%d Start Storage Epoch\n",
 				__func__, current->pid);
@@ -1653,7 +1654,7 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 		
 		spin_unlock_irqrestore(&storage_epoch->s_e_lock, flags);
 	}
-
+	*/
 	/*
 	 * Check if we can merge with the plugged list before grabbing
 	 * any locks.
@@ -3253,7 +3254,8 @@ void blk_request_dispatched(struct request *req)
 	if (req->cmd_type != REQ_TYPE_FS)
 		return;
 
-	if (!req->__data_len && !(req->cmd_bflags & REQ_ORDERED))
+	//if (!req->__data_len && !(req->cmd_bflags & REQ_ORDERED))
+	if (!req->__data_len)
 		return;
 
 	req_bio = req->bio;
@@ -3262,6 +3264,7 @@ void blk_request_dispatched(struct request *req)
 		int i;
 		struct bio *bio = req_bio;
 			
+		/*
 		if (req->cmd_bflags & REQ_ORDERED) {
 			if (bio->storage_epoch) {
 				struct storage_epoch *storage_epoch;
@@ -3278,6 +3281,7 @@ void blk_request_dispatched(struct request *req)
 					(int) atomic_read(&storage_epoch->s_e_count));
 				}
 		}
+		*/
 
 		for (i=0; i < bio->bi_vcnt; i++) {
 			struct bio_vec *bvec = &bio->bi_io_vec[i];

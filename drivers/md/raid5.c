@@ -577,9 +577,10 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 				if (!raid_epoch) {
 					for (j = 0; j < 1000000000000; ++j) {
 						if (j % 10000 == 0)
-							printk (KERN_ERR "[RAID EPOCH] (%s)"
+							panic ("[RAID EPOCH] (%s) %llu : %d "
 								" Null Pointer Dereference!"
-								,__func__);
+								,__func__
+								,(unsigned long long)sh->sector, i);
 					}
 				}
 				spin_lock_irqsave(&raid_epoch->raid_epoch_lock, flags);
@@ -588,7 +589,7 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 						struct bio *cbi = sh->dev[k].written;
 						if (test_bit(R5_OrderedIO, &sh->dev[k].flags)
 							&& k != sh->pd_idx && !cbi)
-							printk(KERN_ERR "[RAID EPOCH] (%s) %p\n"
+							panic( "[RAID EPOCH] (%s) %p\n"
 								,__func__,cbi);
 						if (test_bit(R5_OrderedIO, &sh->dev[k].flags) 
 							&& k !=sh->pd_idx 
@@ -597,7 +598,7 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 							count++;
 					}	
 					if (raid_epoch->pending == count) {
-						set_bit(STRIPE_CACHE_BARRIER, &sh->state);
+						// set_bit(STRIPE_CACHE_BARRIER, &sh->state);
 						barrier_array[i] = obi->shadow_pid;
 						raid_epoch_array[i] = obi->raid_epoch;
 					}
@@ -763,9 +764,12 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 						      sh->dev[i].sector);
 			atomic_set(&bi->dispatch_check, 0);
 
-			printk(KERN_INFO "[RAID EPOCH] (%s) PID : %d %llu : %d Flags : %llx\n",
-        			__func__, bi->shadow_pid, (unsigned long long)sh->sector,     
-        			i, bi->bi_rw);                                
+			if (bi->bi_rw & REQ_ORDERED)
+				printk(KERN_INFO "[RAID EPOCH] (%s) PID : %d %llu : %d" 
+					" Flags : %llx\n",
+        				__func__, bi->shadow_pid, 
+					(unsigned long long)sh->sector,     
+        				i, bi->bi_rw);                                
 
 			generic_make_request(bi);
 		}
@@ -830,6 +834,7 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 	}
 
 	/* SW Modified : The part of patent named "Cache Barrier Stripe" */
+	/*
 	for (i = disks; i--; ) {
 		if (barrier_array[i]) {
 			for (k = disks; k--; ) {
@@ -862,6 +867,7 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 			}
 		}
 	}
+	*/
 	kfree(raid_epoch_array);
 	kfree(bdisk_num_array);
 	kfree(barrier_array);
@@ -2893,8 +2899,15 @@ static int add_stripe_bio(struct stripe_head *sh, struct bio *bi, int dd_idx, in
 		bip = &sh->dev[dd_idx].towrite;
 		if (*bip == NULL)
 			firstwrite = 1;
-		if (*bip && current->pid != (*bip)->shadow_pid) /* SW Modified */
+		/* SW Modified */
+		if (*bip && (current->pid != (*bip)->shadow_pid
+				|| ((*bip)->bi_rw & REQ_ORDERED && bi->bi_rw & REQ_ORDERED))) { 
+			printk(KERN_ERR "[RAID EPOCH] (%s) Current PID : %d Existing PID :%d"
+					"Current OP : %llx Existing OP : %llx"
+					,__func__, current->pid, (*bip)->shadow_pid,
+					bi->bi_rw, (*bip)->bi_rw);
 			goto overlap;
+		}
 	} else
 		bip = &sh->dev[dd_idx].toread;
 	while (*bip && (*bip)->bi_sector < bi->bi_sector) {
@@ -2925,6 +2938,9 @@ static int add_stripe_bio(struct stripe_head *sh, struct bio *bi, int dd_idx, in
 		}
 		if (sector >= sh->dev[dd_idx].sector + STRIPE_SECTORS)
 			set_bit(R5_OVERWRITE, &sh->dev[dd_idx].flags);
+		else
+			panic("[RAID EPOCH] (%s) Sector is Not aligned!\n"
+				,__func__);
 	}
 
 	pr_debug("added bi b#%llu to stripe s#%llu, disk %d.\n",
@@ -4942,8 +4958,9 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 							hlist, current->pid & 0x7F) {
 					if (current->pid == raid_epoch->pid
 						&& !atomic_read(&raid_epoch->finish)) {
-						printk(KERN_INFO "[RAID EPOCH] (%s) PID : %d Find Epoch\n"
-						 	,__func__, current->pid);
+						//printk(KERN_INFO "[RAID EPOCH] (%s) PID : %d "
+						//		"Find Epoch\n"
+						 //	,__func__, current->pid);
 						break;
 					}
 				}	
@@ -4951,8 +4968,8 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 				spin_unlock_irqrestore(&mddev->raid_epoch_table_lock, flags);
 				/* if there is no raid epoch for this thread, create new one */
 				if (!raid_epoch) {
-					printk(KERN_INFO "[RAID EPOCH] (%s) PID : %d Alloc New Epoch\n"
-						,__func__, current->pid);
+					// printk(KERN_INFO "[RAID EPOCH] (%s) PID : %d Alloc New Epoch\n"
+					//	,__func__, current->pid);
 					raid_epoch = kmalloc(sizeof(struct raid_epoch), 
 							GFP_KERNEL);
 					
@@ -4980,10 +4997,10 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 				raid_epoch->pending++;
 				spin_unlock_irqrestore(&raid_epoch->raid_epoch_lock, flags);
 				atomic_inc(&raid_epoch->e_count);
-				printk(KERN_INFO "[RAID EPOCH] (%s) PID : %d %llu : %d E_Count : %d\n"
-						,__func__, current->pid, 
-						(unsigned long long) sh->sector, dd_idx, 
-						atomic_read(&raid_epoch->e_count)); 
+				// printk(KERN_INFO "[RAID EPOCH] (%s) PID : %d %llu : %d E_Count : %d\n"
+				//		,__func__, current->pid, 
+				//		(unsigned long long) sh->sector, dd_idx, 
+				//		atomic_read(&raid_epoch->e_count)); 
 				
 				if (bi->bi_rw & REQ_BARRIER) {
 					spin_lock_irqsave(&raid_epoch->raid_epoch_lock, flags);
@@ -4992,15 +5009,15 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 						flags);
 					atomic_dec(&raid_epoch->e_count);
 					atomic_set(&raid_epoch->finish, 1);
-					printk(KERN_INFO "[RAID EPOCH] (%s) PID : %d Finish Epoch!"
-							" E_Count : %d\n"
-						,__func__, current->pid, 
-						atomic_read(&raid_epoch->e_count));
+					// printk(KERN_INFO "[RAID EPOCH] (%s) PID : %d Finish Epoch!"
+					//		" E_Count : %d\n"
+					//	,__func__, current->pid, 
+					//	atomic_read(&raid_epoch->e_count));
 				}
-				printk(KERN_INFO "[RADI EPOCH] (%s) Raid Epoch %p"
-						"PID : %d %llu : %d\n"
-						,__func__, raid_epoch, current->pid,
-						(unsigned long long) sh->sector, dd_idx);
+				//printk(KERN_INFO "[RAID EPOCH] (%s) Raid Epoch %p"
+				//		"PID : %d %llu : %d\n"
+				//		,__func__, raid_epoch, current->pid,
+				//		(unsigned long long) sh->sector, dd_idx);
 				bi->raid_epoch = raid_epoch;
 				// bi->shadow_pid = current->pid;
 			}
