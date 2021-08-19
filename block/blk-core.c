@@ -3328,7 +3328,7 @@ void blk_request_dispatched(struct request *req)
 
 		req_bio = bio->bi_next;
 	}
-	raid_request_dispatched(req);
+	// raid_request_dispatched(req);
 }
 
 EXPORT_SYMBOL(blk_request_dispatched);

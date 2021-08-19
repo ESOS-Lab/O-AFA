@@ -2608,20 +2608,25 @@ retry:
 				if(current->pid == raid_epoch->pid)
 					break;
 			}
-			if (!raid_epoch || !raid_epoch->pending) {
+			if (!raid_epoch)
 				current->barrier_fail = 1;
-			}
 			else {
-				raid_epoch->barrier = 1;
-				atomic_dec(&raid_epoch->e_count);
-				atomic_set(&raid_epoch->finish, 1);                        
-				printk(KERN_INFO "[RAID EPOCH] (%s) PID : %d Finish Epoch!"
-                				" E_Count : %d\n"                          
-        					,__func__, current->pid,                           
-        					atomic_read(&raid_epoch->e_count));                
-
+				// spin_lock_irqsave(&raid_epoch->raid_epoch_lock, flags);
+				if (!raid_epoch->pending) {
+					current->barrier_fail = 1;
+				}
+				else {
+					raid_epoch->barrier = 1;
+					atomic_dec(&raid_epoch->e_count);
+					atomic_set(&raid_epoch->finish, 1);                        
+					printk(KERN_INFO "[RAID EPOCH] (%s) PID : %d Finish Epoch!"
+                					" E_Count : %d\n"                          
+        						,__func__, current->pid,
+							atomic_read(&raid_epoch->e_count));
+				}
+				// spin_unlock_irqrestore(&raid_epoch->raid_epoch_lock, flags);
 			}
-			spin_unlock_irqrestore(&mddev->raid_epoch_table_lock, flags);
+			spin_unlock_irqrestore(&mddev->raid_epoch_table_lock,flags);
 		}
 		else
 			blk_issue_barrier_plug(&plug);

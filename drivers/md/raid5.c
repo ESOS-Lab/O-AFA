@@ -567,6 +567,7 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 		barrier_array[i] = 0;
 	}
 
+	/*
 	for (i = disks; i--; ) {
 		if(test_bit(R5_Wantwrite, &sh->dev[i].flags)) {
 			struct r5dev *dev = &sh->dev[i];
@@ -575,13 +576,10 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
         		if (test_bit(R5_OrderedIO, &sh->dev[i].flags) && obi) { 
 				raid_epoch = obi->raid_epoch;
 				if (!raid_epoch) {
-					for (j = 0; j < 1000000000000; ++j) {
-						if (j % 10000 == 0)
-							panic ("[RAID EPOCH] (%s) %llu : %d "
-								" Null Pointer Dereference!"
-								,__func__
-								,(unsigned long long)sh->sector, i);
-					}
+					panic ("[RAID EPOCH] (%s) %llu : %d "
+						" Null Pointer Dereference!"
+						,__func__
+						,(unsigned long long)sh->sector, i);
 				}
 				spin_lock_irqsave(&raid_epoch->raid_epoch_lock, flags);
 				if (raid_epoch->barrier) {
@@ -603,14 +601,15 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 						raid_epoch_array[i] = obi->raid_epoch;
 					}
 				}
-				/* SW : Need to Check, What if pending is increased twice 
-				by calling make_request() twice at the same device of stripe? */
+				// SW : Need to Check, What if pending is increased twice 
+				// by calling make_request() twice at the same device of stripe? 
         	        	raid_epoch->pending--;                 
 				spin_unlock_irqrestore(&raid_epoch->raid_epoch_lock, flags);
         		}
 		}                                                    
 	}                                                            
-
+	*/
+	
 	for (i = disks; i--; ) {
 		unsigned long long rw;
 		int replace_only = 0;
@@ -1554,8 +1553,8 @@ ops_run_biodrain(struct stripe_head *sh, struct dma_async_tx_descriptor *tx)
 					set_bit(R5_WantFUA, &dev->flags);
 				if (wbi->bi_rw & REQ_SYNC)
 					set_bit(R5_SyncIO, &dev->flags);
-				if (wbi->bi_rw & REQ_ORDERED)
-					set_bit(R5_OrderedIO, &dev->flags);
+				// if (wbi->bi_rw & REQ_ORDERED)
+				//	set_bit(R5_OrderedIO, &dev->flags);
 				if (wbi->bi_rw & REQ_DISCARD)
 					set_bit(R5_Discard, &dev->flags);
 				else
@@ -2365,6 +2364,7 @@ void raid5_end_write_request(struct bio *bi, int error)
 	wbi = dev->written;
 	pdev = &sh->dev[sh->pd_idx];
 	
+	/*
 	if (wbi && wbi->bi_rw & REQ_ORDERED && wbi->raid_epoch
 	        && !atomic_cmpxchg(&bi->dispatch_check, 0, 1)) {
 	        // Need to check the case in which
@@ -2390,6 +2390,7 @@ void raid5_end_write_request(struct bio *bi, int error)
 				bi->raid_disk_num,
                         	atomic_read(&wbi->raid_epoch->e_count));
 	}
+	*/
 
 	if (!test_and_clear_bit(R5_DOUBLE_LOCKED, &sh->dev[i].flags)) {
 		clear_bit(R5_LOCKED, &sh->dev[i].flags);
@@ -4941,19 +4942,20 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 			/* SW Modified */
 			bi->raid_epoch = NULL;
 			if (bi->bi_rw & REQ_ORDERED) {
-				/* Clean and Find raid epoch of this thread at master hash table */
+				// Clean and Find raid epoch of this thread at master hash table 
 				struct raid_epoch *raid_epoch = NULL;
 				unsigned long flags;
+				
 				spin_lock_irqsave(&mddev->raid_epoch_table_lock, flags);
+				
+				// hash_for_each_possible_safe(mddev->raid_epoch_table, raid_epoch, 
+				//		next ,hlist, current->pid & 0x7f) {
+				//	if(atomic_read(&raid_epoch->clear)) {
+				//		hash_del(&raid_epoch->hlist);
+				//		kfree(raid_epoch);	
+				//	}
+				// }  
 			
-				hash_for_each_possible_safe(mddev->raid_epoch_table, raid_epoch, 
-						next ,hlist, current->pid & 0x7f) {
-					if(atomic_read(&raid_epoch->clear)) {
-						hash_del(&raid_epoch->hlist);
-						kfree(raid_epoch);	
-					}
-				}  
-
 				hash_for_each_possible(mddev->raid_epoch_table, raid_epoch, 
 							hlist, current->pid & 0x7F) {
 					if (current->pid == raid_epoch->pid
@@ -4965,13 +4967,20 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 					}
 				}	
 
-				/* if there is no raid epoch for this thread, create new one */
+				// if there is no raid epoch for this thread, create new one 
 				if (!raid_epoch) {
 					// printk(KERN_INFO "[RAID EPOCH] (%s) PID : %d Alloc New Epoch\n"
 					//	,__func__, current->pid);
-					raid_epoch = kmalloc(sizeof(struct raid_epoch), 
-							GFP_KERNEL);
+					raid_epoch = kmalloc(sizeof(raid_epoch), GFP_ATOMIC);
 					
+					if (!raid_epoch) {
+						spin_unlock_irqrestore(&mddev->raid_epoch_table_lock
+									, flags);
+						raid_epoch = kmalloc(sizeof(raid_epoch), GFP_KERNEL);
+						spin_lock_irqsave(&mddev->raid_epoch_table_lock
+									, flags);	
+					}
+
 					raid_epoch->mddev = mddev; 
 					raid_epoch->conf = conf;
 					raid_epoch->pid = current->pid; 
@@ -4988,6 +4997,7 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 					hash_add(mddev->raid_epoch_table, &raid_epoch->hlist, 
 							raid_epoch->pid & 0x7F);
 				}
+					
 				spin_unlock_irqrestore(&mddev->raid_epoch_table_lock, flags);
 				
 				spin_lock_irqsave(&raid_epoch->raid_epoch_lock, flags);
@@ -5015,7 +5025,7 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 				// bi->shadow_pid = current->pid;
 				spin_unlock_irqrestore(&raid_epoch->raid_epoch_lock, flags);
 			}
-			
+
 			set_bit(STRIPE_HANDLE, &sh->state);
 			clear_bit(STRIPE_DELAYED, &sh->state);
 			
