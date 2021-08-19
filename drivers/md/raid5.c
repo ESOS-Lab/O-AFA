@@ -4943,6 +4943,7 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 				
 				// if there is no raid epoch for this thread, create new one 
 				if (!current->__raid_epoch) {
+					// raid_epoch = kzalloc(sizeof(raid_epoch), GFP_NOIO);
 					raid_epoch = mempool_alloc(mddev->raid_epoch_pool
 									, GFP_NOIO);
 
