@@ -427,24 +427,20 @@ struct mddev {
 	void (*sync_super)(struct mddev *mddev, struct md_rdev *rdev);
 
 	/* SW Modified */
-	spinlock_t			raid_epoch_table_lock;
-	DECLARE_HASHTABLE(raid_epoch_table, 7);	/* Master Hash Table */
+	// spinlock_t			raid_epoch_table_lock;
+	//DECLARE_HASHTABLE(raid_epoch_table, 7);	/* Master Hash Table */
+	mempool_t			*raid_epoch_pool;
 };
 
 /* SW Modified */
 struct raid_epoch {
-	struct mddev 		*mddev;
-	struct r5conf 		*conf;
-	pid_t			pid;
-	struct hlist_node	hlist;
-
+	struct task_struct	*task;
+	
 	unsigned int 		barrier;
 	unsigned int 		pending;
 	spinlock_t		raid_epoch_lock;
 
 	atomic_t		dbarrier_count;
-	atomic_t		finish;
-	atomic_t		clear;
 	atomic_t 		e_count;
 };
 
@@ -657,7 +653,4 @@ static inline int mddev_check_plugged(struct mddev *mddev)
 	return !!blk_check_plugged(md_unplug, mddev,
 				   sizeof(struct blk_plug_cb));
 }
-/* SW Modified */
-// extern struct kmem_cache *raid_epoch_cachep;
-// extern struct kmem_cache *raid_epoch_link_cachep;
 #endif /* _MD_MD_H */

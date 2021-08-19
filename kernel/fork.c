@@ -313,10 +313,9 @@ static struct task_struct *dup_task_struct(struct task_struct *orig)
 	/* UFS */
 	// tsk->epoch = 0;
 	// tsk->__epoch = 0;
-	spin_lock_init(&tsk->epoch_table_lock);
-	hash_init(tsk->epoch_set_table);
 	tsk->barrier_fail = 0;
 	tsk->epoch_fail = 0;
+	tsk->__raid_epoch = NULL;
 
 	tsk->stack = ti;
 

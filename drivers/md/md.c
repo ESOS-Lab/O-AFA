@@ -75,6 +75,8 @@ static DECLARE_WAIT_QUEUE_HEAD(resync_wait);
 static struct workqueue_struct *md_wq;
 static struct workqueue_struct *md_misc_wq;
 
+struct kmem_cache *raid_epoch_cachep;
+
 static int remove_and_add_spares(struct mddev *mddev,
 				 struct md_rdev *this);
 
@@ -527,12 +529,16 @@ void mddev_init(struct mddev *mddev)
 	mddev->resync_min = 0;
 	mddev->resync_max = MaxSector;
 	mddev->level = LEVEL_NONE;
-	hash_init(mddev->raid_epoch_table);
-	spin_lock_init(&mddev->raid_epoch_table_lock);
-	/*
+	// hash_init(mddev->raid_epoch_table);
+	// spin_lock_init(&mddev->raid_epoch_table_lock);
 	raid_epoch_cachep = kmem_cache_create("mddev_epoch",
 			sizeof(struct raid_epoch), 0, SLAB_PANIC, NULL);
-	*/
+	mddev->raid_epoch_pool = mempool_create_node(128, mempool_alloc_slab,
+				 mempool_free_slab, raid_epoch_cachep, GFP_NOIO, -1);
+	if (mddev->raid_epoch_pool) {
+		printk(KERN_ERR "[RAID EPOCH] raid_epoch_pool create error");
+		return NULL;
+	}
 	//raid_epoch_link_cachep = kmem_cache_create("mddev_link_epoch",
 	//		sizeof(struct raid_epoch_link), 0, SLAB_PANIC, NULL);
 }

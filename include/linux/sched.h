@@ -1486,8 +1486,8 @@ struct task_struct {
 	//struct list_head epoch_complte;
 	//struct list_head epoch_error;
 	
-	spinlock_t	epoch_table_lock;
-	DECLARE_HASHTABLE(epoch_set_table, 7); /* SW Modified */
+	/* SW Modified */
+	struct raid_epoch *__raid_epoch;
 };
 
 /* Future-safe accessor for struct task_struct's cpus_allowed. */
