@@ -1549,112 +1549,75 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 	}
 
 	/* UFS */
-	/*
 	if (bio->bi_rw & REQ_ORDERED) {
-		// Find storage_epoch_list from hash table 
-		if (!current->epoch_set_table) {
-			printk(KERN_ERR "[STORAGE EPOCH] (%s) PID : %d No Epoch Set Table!\n",
-					__func__,current->pid);
-			return;
-		}
-		
-		hash_for_each_possible(current->epoch_set_table, storage_epoch_list, 
-			hlist, bio->shadow_pid & 0x7f) {
-			if (bio->shadow_pid == storage_epoch_list->pid) {
-				printk(KERN_INFO 
-					"[STORAGE EPOCH] (%s) PID : %d Find Epoch List : %p\n"
-					,__func__, current->pid, storage_epoch_list);	
-				break;
-			}
-		}
+		struct task_struct *task = bio->raid_epoch ? 
+						bio->raid_epoch->task : current;
 
-		// if there is no matched list, create new one 
-		// To Do : Cleaning storage_epoch_list when Process Exit 
-		if (!storage_epoch_list) {
-			storage_epoch_list = kmalloc(sizeof(struct storage_epoch_list), 
-						GFP_KERNEL); 
-			storage_epoch_list->pid = bio->shadow_pid;
-			INIT_LIST_HEAD(&storage_epoch_list->slist);
-			if (!storage_epoch_list) {
-				printk(KERN_ERR "[STORAGE EPOCH] (%s) kmalloc fail!\n",
-					__func__);
-				return;
-			}
-			hash_add(current->epoch_set_table, &storage_epoch_list->hlist, 
-				storage_epoch_list->pid & 0x7F);
-			printk(KERN_INFO "[STORAGE EPOCH] (%s) PID : %d Allocate Epoch List\n"
-					,__func__, current->pid);
-		}
-
-		// Do Cleaning Finished Storage Epoch which is reserved at IRQ Handler 
-		// To Do : Cleaning storage_epoch when Process Exit 
-		list_for_each_safe(ptr, ptrn, &storage_epoch_list->slist) {
-			struct storage_epoch *storage_epoch_element = NULL; 
-			storage_epoch_element = list_entry(ptr, struct storage_epoch, list);
-			if (atomic_read(&storage_epoch_element->clear)) {
-				list_del(ptr);
-				kfree(storage_epoch_element);
-			}
-		}
-	
-		// Find Corresponding Epoch from list 
-		list_for_each(ptr, &storage_epoch_list->slist) {
+		/* Access Storage List */
+		list_for_each(ptr, &task->storage_list) {
 			storage_epoch = list_entry(ptr, struct storage_epoch, list);
-			if (storage_epoch->q == q && !atomic_read(&storage_epoch->finish)) {
-				find = 1;
-				printk(KERN_INFO "[STORAGE EPOCH] (%s) PID : %d Find Storage Epoch\n"						,__func__, current->pid);
+			if (storage_epoch->q == q) 
 				break;
-			}
 		}
 		
-		// if there is no epoch, Start new epoch 
-		if (!find) {
-			printk (KERN_INFO "[STORAGE EPOCH] (%s) PID :%d Start Storage Epoch\n",
-				__func__, current->pid);
-			storage_epoch = kmalloc(sizeof(struct storage_epoch),GFP_KERNEL);
-			memset(storage_epoch, 0, sizeof(struct storage_epoch));
-			storage_epoch->task = current;
+		if (!storage_epoch) {
+			storage_epoch = kzalloc(sizeof(struct storage_epoch), GFP_NOIO);
+
+			storage_epoch->task = task;
 			storage_epoch->q = q;
-			storage_epoch->pid = bio->shadow_pid;
-			
-			storage_epoch->pending = 0;
-			storage_epoch->dispatch = 0;
-			storage_epoch->complete = 0;
-			storage_epoch->barrier = 0;
-
-			spin_lock_init(&storage_epoch->s_e_lock);		
-			atomic_set(&storage_epoch->s_e_count , 0);
-			atomic_set(&storage_epoch->finish, 0);
-			atomic_set(&storage_epoch->clear, 0);
-
-			list_add_tail(&storage_epoch->list, &storage_epoch_list->slist);
 		
-			atomic_inc(&storage_epoch->s_e_count);
+			storage_epoch->pending = 0;                                     
+			storage_epoch->dispatch = 0;                                    
+			storage_epoch->complete = 0;                                    
+			storage_epoch->barrier = 0;                                     
+                                                                
+			spin_lock_init(&storage_epoch->s_e_lock);                       
+			atomic_set(&storage_epoch->s_e_count, 0);                      
+			atomic_set(&storage_epoch->finish, 0);                          
+			atomic_set(&storage_epoch->clear, 0);     
+			INIT_LIST_HEAD(&storage_epoch->list);                      
+                                                                
+			list_add_tail(&storage_epoch->list, &task->storage_list);
+                                                                
+			atomic_inc(&storage_epoch->s_e_count); 
+			if (bio->raid_epoch) {
+				printk(KERN_INFO "[STORAGE EPOCH] (%s) PID : %d Device : %d "
+							"Epoch Count : %d "
+							"Start Storage Epoch!\n"
+						,__func__, bio->raid_epoch->task->pid
+						,bio->raid_disk_num
+						,atomic_read(&storage_epoch->s_e_count));
+			}              
 		}
-
-		atomic_inc(&storage_epoch->s_e_count);
-		printk (KERN_INFO "[STORAGE EPOCH] (%s) PID : %d Device : %p Inc Epoch Count : %d\n"
-					,__func__, current->pid, storage_epoch->q, 
-					atomic_read(&storage_epoch->s_e_count));
 
 		bio->storage_epoch = storage_epoch;
-		spin_lock_irqsave(&storage_epoch->s_e_lock, flags);
-		storage_epoch->pending++;
-	
-		if (bio->bi_rw & REQ_BARRIER) {
-			printk (KERN_INFO "[STORAGE EPOCH] (%s) PID : %d Finish Storage Epoch\n"
-					,__func__, current->pid);
-			storage_epoch->barrier = 1;
-			atomic_set(&storage_epoch->finish, 1);
-			atomic_dec(&storage_epoch->s_e_count);
-			printk (KERN_INFO "[STORAGE EPOCH] (%s) PID : %d Dec Epoch Count : %d\n"
-						,__func__, current->pid, 
-						atomic_read(&storage_epoch->s_e_count));
+		atomic_inc(&bio->storage_epoch->s_e_count);
+		if (bio->raid_epoch) {
+			printk(KERN_INFO "[STORAGE EPOCH] (%s) PID : %d Device : %d "
+						"Epoch Count : %d\n"
+						,__func__, bio->raid_epoch->task->pid
+						,bio->raid_disk_num, 
+						atomic_read(&bio->storage_epoch->s_e_count));
 		}
+		// spin_lock_irqsave(&storage_epoch->s_e_lock, flags);
+		bio->storage_epoch->pending++;
 		
-		spin_unlock_irqrestore(&storage_epoch->s_e_lock, flags);
+		if (bio->bi_rw & REQ_BARRIER) {
+			bio->storage_epoch->barrier = 1;
+			atomic_set(&bio->storage_epoch->finish, 1);
+			atomic_dec(&storage_epoch->s_e_count);
+			list_del(&storage_epoch->list);
+			if (bio->raid_epoch) {
+				printk(KERN_INFO "[STORAGE EPOCH] (%s) PID : %d Device : %d "
+							"Epoch Count : %d "
+							"Finish Storage Epoch!\n"
+						,__func__, bio->raid_epoch->task->pid
+						,bio->raid_disk_num
+						,atomic_read(&bio->storage_epoch->s_e_count));
+			} 
+		}
+		// spin_unlock_irqrestore(&storage_epoch->s_e_lock, flags);
 	}
-	*/
 	/*
 	 * Check if we can merge with the plugged list before grabbing
 	 * any locks.
@@ -3295,24 +3258,27 @@ void blk_request_dispatched(struct request *req)
 		int i;
 		struct bio *bio = req_bio;
 			
-		/*
 		if (req->cmd_bflags & REQ_ORDERED) {
 			if (bio->storage_epoch) {
 				struct storage_epoch *storage_epoch;
 				storage_epoch = bio->storage_epoch;
 				if (atomic_dec_and_test(&storage_epoch->s_e_count)) {
 					atomic_set(&storage_epoch->clear, 1);
-					printk(KERN_INFO "[STORAGE EPOCH] (%s) PID : %d "
-						"Device : %p ClearEpoch!\n"
-						,__func__, current->pid, storage_epoch->q);
+					printk(KERN_INFO "[STORAGE EPOCH] (%s)"
+						"PID : %d Device : %d ClearEpoch!\n"
+						,__func__,bio->storage_epoch->task->pid
+						,bio->raid_disk_num);
+					kfree(storage_epoch);
 				}
-				printk (KERN_INFO "[STORAGE EPOCH] (%s) PID : %d Device "
-					": %p Dec Epoch Count : %d\n"
-					,__func__, current->pid,storage_epoch->q, 
-					(int) atomic_read(&storage_epoch->s_e_count));
+				else {
+					printk (KERN_INFO "[STORAGE EPOCH] (%s) PID : %d Device "
+						": %d Dec Epoch Count : %d\n"
+						,__func__,bio->storage_epoch->task->pid
+						,bio->raid_disk_num, 
+						(int) atomic_read(&storage_epoch->s_e_count));
 				}
+			}
 		}
-		*/
 
 		for (i=0; i < bio->bi_vcnt; i++) {
 			struct bio_vec *bvec = &bio->bi_io_vec[i];

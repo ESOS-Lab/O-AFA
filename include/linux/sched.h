@@ -95,18 +95,19 @@ struct storage_epoch_list {
 
 /* UFS: epoch structure */
 struct epoch {
-	struct task_struct *task;
-	struct request_queue *q;
+	struct task_struct 	*task;
+	struct request_queue 	*q;
 	
-	unsigned int barrier;
+	unsigned int 		barrier;
 	
-	unsigned int pending;
-	unsigned int dispatch;
-	unsigned int complete;
-	unsigned int error;
-	unsigned int error_flags;
+	unsigned int 		pending;
+	unsigned int 		dispatch;
+	unsigned int 		complete;
+	unsigned int 		error;
+	unsigned int 		error_flags;
 
-        atomic_t e_count;
+        atomic_t 		e_count;
+	spinlock_t		epoch_lock;
 	
 	//struct list_head list;
 };
@@ -1477,8 +1478,10 @@ struct task_struct {
 	unsigned int	sequential_io_avg;
 #endif
 	/* UFS: epoch structure for task */
-	struct epoch *epoch;
-        struct epoch *__epoch;
+	struct list_head storage_list;
+	spinlock_t list_lock;
+	//struct epoch *epoch;
+        //struct epoch *__epoch;
 	unsigned int barrier_fail;
 	unsigned int epoch_fail;
 	//struct list_head epoch_pending;

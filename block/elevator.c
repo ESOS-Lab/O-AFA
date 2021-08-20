@@ -367,7 +367,6 @@ void elv_dispatch_sort(struct request_queue *q, struct request *rq)
 	boundary = q->end_sector;
 	stop_flags = REQ_SOFTBARRIER | REQ_STARTED;
 
-	/*
 	if (rq->cmd_bflags & REQ_ORDERED) {
 		struct bio *req_bio;
 		req_bio = rq->bio;
@@ -375,30 +374,33 @@ void elv_dispatch_sort(struct request_queue *q, struct request *rq)
 			struct bio *bio = req_bio;
 			if (bio->storage_epoch) {
 				struct storage_epoch *storage_epoch = bio->storage_epoch;
+				/*
 				if (atomic_read(&storage_epoch->clear))
 					panic("[STORAGE SCHEDULER] (%s) "
 						"Storage Epoch is already Freed!"
 						"Sector : %llu"
 						,__func__
 						, (unsigned long long)bio->bi_sector);
-				spin_lock_irqsave(&storage_epoch->s_e_lock,flags);
+				*/
+				// spin_lock_irqsave(&storage_epoch->s_e_lock,flags);
+				/*
 				if (storage_epoch->q != q) {
 					panic ("[STORAGE SCHEDULER] (%s) "
 						"Request Queue is Not Matched!, Disk Idx :%d\n"
 						,__func__, bio->raid_disk_num);
 					break;
 				}
+				*/
 				if (storage_epoch->pending == 1 && storage_epoch->barrier) {
 					rq->cmd_bflags |= REQ_BARRIER;
 				}
 				storage_epoch->pending--;
-				spin_unlock_irqrestore(&storage_epoch->s_e_lock,flags);
+				// spin_unlock_irqrestore(&storage_epoch->s_e_lock,flags);
 
 			}
 			req_bio = bio->bi_next;
 		}
 	}
-	*/
 
 	list_for_each_prev(entry, &q->queue_head) {
 		struct request *pos = list_entry_rq(entry);

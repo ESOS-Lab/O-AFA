@@ -535,10 +535,11 @@ void mddev_init(struct mddev *mddev)
 			sizeof(struct raid_epoch), 0, SLAB_PANIC, NULL);
 	mddev->raid_epoch_pool = mempool_create_node(128, mempool_alloc_slab,
 				 mempool_free_slab, raid_epoch_cachep, GFP_NOIO, -1);
-	if (mddev->raid_epoch_pool) {
+	if (!mddev->raid_epoch_pool) {
 		printk(KERN_ERR "[RAID EPOCH] raid_epoch_pool create error");
-		return NULL;
 	}
+	else
+		printk(KERN_INFO "[RAID EPOCH] raid_epoch_pool is created");
 	//raid_epoch_link_cachep = kmem_cache_create("mddev_link_epoch",
 	//		sizeof(struct raid_epoch_link), 0, SLAB_PANIC, NULL);
 }
