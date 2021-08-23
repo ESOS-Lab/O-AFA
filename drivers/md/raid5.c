@@ -596,7 +596,7 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 							count++;
 					}	
 					if (raid_epoch->pending == count) {
-						// set_bit(STRIPE_CACHE_BARRIER, &sh->state);
+						set_bit(STRIPE_CACHE_BARRIER, &sh->state);
 						barrier_array[i] = obi->shadow_pid;
 						raid_epoch_array[i] = obi->raid_epoch;
 					}
@@ -834,7 +834,6 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 	}
 
 	/* SW Modified : The part of patent named "Cache Barrier Stripe" */
-	/*
 	for (i = disks; i--; ) {
 		if (barrier_array[i]) {
 			for (k = disks; k--; ) {
@@ -868,7 +867,6 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 			}
 		}
 	}
-	*/
 	kfree(raid_epoch_array);
 	kfree(bdisk_num_array);
 	kfree(barrier_array);
@@ -1380,6 +1378,30 @@ void raid_request_dispatched(struct request *req)
 		
 		if (bio->bi_end_io == raid5_end_dbarrier_request) {
 			if(!atomic_cmpxchg(&bio->dispatch_check, 0, 1)) {
+
+				if (bio->raid_epoch
+        				&& !atomic_cmpxchg(&bio->dispatch_check, 0, 1)) {
+        				/* Need to check the case in which
+                				same sector has double wbi */
+        				struct raid_epoch *raid_epoch = bio->raid_epoch;
+        				if (atomic_dec_and_test(&raid_epoch->e_count)){
+                				printk(KERN_INFO "[RAID EPOCH] (%s) PID : %d Clear"
+                                			"Epoch! %llu : %d\n",__func__
+                                			,raid_epoch->task->pid
+                                			,(unsigned long long) sh->sector
+                                			,bio->raid_disk_num);
+                				mempool_free(raid_epoch, mddev->raid_epoch_pool);
+        				}
+        				else {
+                				printk(KERN_INFO "[RAID EPOCH] (%s) PID : %d "
+                        					"%llu : %d E_Count : %d\n"
+                        					,__func__, raid_epoch->task->pid,
+                        					(unsigned long long)sh->sector,
+                        					bio->raid_disk_num,
+                        					atomic_read(&raid_epoch->e_count));
+        				}
+				}
+
 				/* Handle the case where cache barrier stripe is last arrived */
 				if(atomic_dec_and_test(&bio->raid_epoch->dbarrier_count)) {
 					clear_bit(STRIPE_CACHE_BARRIER, &sh->state);
