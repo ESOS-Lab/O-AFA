@@ -596,7 +596,7 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 							count++;
 					}	
 					if (raid_epoch->pending == count) {
-						// set_bit(STRIPE_CACHE_BARRIER, &sh->state);
+						set_bit(STRIPE_CACHE_BARRIER, &sh->state);
 						barrier_array[i] = obi->shadow_pid;
 						raid_epoch_array[i] = obi->raid_epoch;
 					}
@@ -834,7 +834,6 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 	}
 
 	/* SW Modified : The part of patent named "Cache Barrier Stripe" */
-	/*
 	for (i = disks; i--; ) {
 		if (barrier_array[i]) {
 			for (k = disks; k--; ) {
@@ -868,7 +867,6 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 			}
 		}
 	}
-	*/
 	kfree(raid_epoch_array);
 	kfree(bdisk_num_array);
 	kfree(barrier_array);
@@ -1425,8 +1423,8 @@ void raid_request_dispatched(struct request *req)
                 					dev->sector + STRIPE_SECTORS                 
                 					&& atomic_read(&dev->req.dispatch_check)) {  
 					
-					printk(KERN_INFO "[SWDEBUG] (%s) Bi : %p Sector : %d\n"
-					,__func__, wbi, wbi->bi_sector);
+					// printk(KERN_INFO "[SWDEBUG] (%s) Bi : %p Sector : %d\n"
+					// ,__func__, wbi, wbi->bi_sector);
                 			
 							__raid_request_dispatched(wbi,               
                         				wbi->bi_sector, dev->sector);               
@@ -1495,8 +1493,8 @@ void raid_request_dispatched(struct request *req)
 				//		(unsigned long long)sh->sector
 				//		, bio->raid_disk_num);
 			/* SW Modified : Track Dispatched Page using ops_run_biodrain routine */
-				printk(KERN_INFO "[SWDEBUG] (%s) Bi : %p Sector : %d\n"
-					,__func__, wbi, wbi->bi_sector);
+				// printk(KERN_INFO "[SWDEBUG] (%s) Bi : %p Sector : %d\n"
+				//	,__func__, wbi, wbi->bi_sector);
 
 				__raid_request_dispatched(wbi, wbi->bi_sector, dev->sector);
 
@@ -1523,8 +1521,8 @@ void raid_request_dispatched(struct request *req)
 						//			": %d\n" ,
 						//		__func__, wbi->shadow_pid, 
 						//		(unsigned long long) sh->sector,i);
-					printk(KERN_INFO "[SWDEBUG] (%s) Bi : %p Sector : %d\n"
-						,__func__, wbi, wbi->bi_sector);
+					//printk(KERN_INFO "[SWDEBUG] (%s) Bi : %p Sector : %d\n"
+					//	,__func__, wbi, wbi->bi_sector);
 						
 						/* SW Modified : Track Dispatched Page 
 						using ops_run_biodrain routine */
@@ -1572,8 +1570,8 @@ ops_run_biodrain(struct stripe_head *sh, struct dma_async_tx_descriptor *tx)
 			wbi = dev->written = chosen;
 			spin_unlock_irq(&sh->stripe_lock);
 			
-			printk (KERN_INFO "[SWDEBUG] (%s) bi : %p\n"
-                			,__func__, wbi);            
+			// printk (KERN_INFO "[SWDEBUG] (%s) bi : %p\n"
+                	//		,__func__, wbi);            
 
 			while (wbi && wbi->bi_sector <
 				dev->sector + STRIPE_SECTORS) {
@@ -1588,8 +1586,8 @@ ops_run_biodrain(struct stripe_head *sh, struct dma_async_tx_descriptor *tx)
 				else
 					tx = async_copy_data(1, wbi, dev->page,
 						dev->sector, tx);
-				printk(KERN_INFO "[SWDEBUG] (%s) Sector : %d\n"
-        				,__func__, wbi->bi_sector);            
+				// printk(KERN_INFO "[SWDEBUG] (%s) Sector : %d\n"
+        			// 	,__func__, wbi->bi_sector);            
 				wbi = r5_next_bio(wbi, dev->sector);
 			}
 		}
@@ -2255,21 +2253,21 @@ void raid5_end_dbarrier_request(struct bio *bi, int error)
 		}
 		struct raid_epoch *raid_epoch = bi->raid_epoch;
 		if (atomic_dec_and_test(&raid_epoch->e_count)) {
-        		printk(KERN_INFO "[RAID EPOCH] (%s) PID : %d Clear"                
-                        	"Epoch! %llu : %d\n",__func__                      
-                        	,raid_epoch->task->pid                              
-                        	,(unsigned long long) sh->sector                   
-                        	,bi->raid_disk_num);                              
+        		//printk(KERN_INFO "[RAID EPOCH] (%s) PID : %d Clear"                
+                        //	"Epoch! %llu : %d\n",__func__                      
+                        //	,raid_epoch->task->pid                              
+                        //	,(unsigned long long) sh->sector                   
+                        //	,bi->raid_disk_num);                              
 				mempool_free(raid_epoch, mddev->raid_epoch_pool);
 		}                                                                          
-		else {
-			printk(KERN_INFO "[RAID EPOCH] (%s) PID : %d "                             
-                		"%llu : %d E_Count : %d\n"                                 
-                		,__func__, raid_epoch->task->pid,                           
-                		(unsigned long long)sh->sector,                            
-                		bi->raid_disk_num,                                        
-                		atomic_read(&raid_epoch->e_count));
-		}
+		//else {
+		//	printk(KERN_INFO "[RAID EPOCH] (%s) PID : %d "                             
+                //		"%llu : %d E_Count : %d\n"                                 
+                //		,__func__, raid_epoch->task->pid,                           
+                //		(unsigned long long)sh->sector,                            
+                //		bi->raid_disk_num,                                        
+                //		atomic_read(&raid_epoch->e_count));
+		//}
 	}
 
         rdev = conf->disks[bi->raid_disk_num].rdev;
@@ -3275,14 +3273,14 @@ static void handle_stripe_clean_event(struct r5conf *conf,
 				dev->written = NULL;
 				while (wbi && wbi->bi_sector <
 					dev->sector + STRIPE_SECTORS) {
-					printk(KERN_INFO "[SWDEBUG] (%s) Bi : %p Dispatch Check %d "
-						"Sector : %d\n"
-						,__func__, wbi, atomic_read(&wbi->dispatch_check),
-						wbi->bi_sector);
+					// printk(KERN_INFO "[SWDEBUG] (%s) Bi : %p Dispatch Check %d "
+					//	"Sector : %d\n"
+					//	,__func__, wbi, atomic_read(&wbi->dispatch_check),
+					//	wbi->bi_sector);
 					wbi2 = r5_next_bio(wbi, dev->sector);
 					if (!raid5_dec_bi_active_stripes(wbi)) {
-						printk(KERN_INFO "[SWDEBUG] (%s) Return BI!\n"
-							,__func__);
+						//printk(KERN_INFO "[SWDEBUG] (%s) Return BI!\n"
+						//	,__func__);
 						md_write_end(conf->mddev);
 						wbi->bi_next = *return_bi;
 						*return_bi = wbi;
