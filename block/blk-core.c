@@ -1573,48 +1573,45 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
                                                                 
 			spin_lock_init(&storage_epoch->s_e_lock);                       
 			atomic_set(&storage_epoch->s_e_count, 0);                      
-			atomic_set(&storage_epoch->finish, 0);                          
-			atomic_set(&storage_epoch->clear, 0);     
 			INIT_LIST_HEAD(&storage_epoch->list);                      
                                                                 
 			list_add_tail(&storage_epoch->list, &task->storage_list);
                                                                 
 			atomic_inc(&storage_epoch->s_e_count); 
-			if (bio->raid_epoch) {
-				printk(KERN_INFO "[STORAGE EPOCH] (%s) PID : %d Device : %d "
-							"Epoch Count : %d "
-							"Start Storage Epoch!\n"
-						,__func__, bio->raid_epoch->task->pid
-						,bio->raid_disk_num
-						,atomic_read(&storage_epoch->s_e_count));
-			}              
+			// if (bio->raid_epoch) {
+			//	printk(KERN_INFO "[STORAGE EPOCH] (%s) PID : %d Device : %d "
+			//				"Epoch Count : %d "
+			//				"Start Storage Epoch!\n"
+			//			,__func__, bio->raid_epoch->task->pid
+			//			,bio->raid_disk_num
+			//			,atomic_read(&storage_epoch->s_e_count));
+			//}              
 		}
 
 		bio->storage_epoch = storage_epoch;
 		atomic_inc(&bio->storage_epoch->s_e_count);
-		if (bio->raid_epoch) {
-			printk(KERN_INFO "[STORAGE EPOCH] (%s) PID : %d Device : %d "
-						"Epoch Count : %d\n"
-						,__func__, bio->raid_epoch->task->pid
-						,bio->raid_disk_num, 
-						atomic_read(&bio->storage_epoch->s_e_count));
-		}
+		//if (bio->raid_epoch) {
+		//	printk(KERN_INFO "[STORAGE EPOCH] (%s) PID : %d Device : %d "
+		//				"Epoch Count : %d\n"
+		//				,__func__, bio->raid_epoch->task->pid
+		//				,bio->raid_disk_num, 
+		//				atomic_read(&bio->storage_epoch->s_e_count));
+		//}
 		// spin_lock_irqsave(&storage_epoch->s_e_lock, flags);
 		bio->storage_epoch->pending++;
 		
 		if (bio->bi_rw & REQ_BARRIER) {
 			bio->storage_epoch->barrier = 1;
-			atomic_set(&bio->storage_epoch->finish, 1);
 			atomic_dec(&storage_epoch->s_e_count);
 			list_del(&storage_epoch->list);
-			if (bio->raid_epoch) {
-				printk(KERN_INFO "[STORAGE EPOCH] (%s) PID : %d Device : %d "
-							"Epoch Count : %d "
-							"Finish Storage Epoch!\n"
-						,__func__, bio->raid_epoch->task->pid
-						,bio->raid_disk_num
-						,atomic_read(&bio->storage_epoch->s_e_count));
-			} 
+			//if (bio->raid_epoch) {
+			//	printk(KERN_INFO "[STORAGE EPOCH] (%s) PID : %d Device : %d "
+			//				"Epoch Count : %d "
+			//				"Finish Storage Epoch!\n"
+			//			,__func__, bio->raid_epoch->task->pid
+			//			,bio->raid_disk_num
+			//			,atomic_read(&bio->storage_epoch->s_e_count));
+			//} 
 		}
 		// spin_unlock_irqrestore(&storage_epoch->s_e_lock, flags);
 	}
@@ -3263,20 +3260,19 @@ void blk_request_dispatched(struct request *req)
 				struct storage_epoch *storage_epoch;
 				storage_epoch = bio->storage_epoch;
 				if (atomic_dec_and_test(&storage_epoch->s_e_count)) {
-					atomic_set(&storage_epoch->clear, 1);
-					printk(KERN_INFO "[STORAGE EPOCH] (%s)"
-						"PID : %d Device : %d ClearEpoch!\n"
-						,__func__,bio->storage_epoch->task->pid
-						,bio->raid_disk_num);
+					//printk(KERN_INFO "[STORAGE EPOCH] (%s)"
+					//	"PID : %d Device : %d ClearEpoch!\n"
+					//	,__func__,bio->storage_epoch->task->pid
+					//	,bio->raid_disk_num);
 					kfree(storage_epoch);
 				}
-				else {
-					printk (KERN_INFO "[STORAGE EPOCH] (%s) PID : %d Device "
-						": %d Dec Epoch Count : %d\n"
-						,__func__,bio->storage_epoch->task->pid
-						,bio->raid_disk_num, 
-						(int) atomic_read(&storage_epoch->s_e_count));
-				}
+				//else {
+				//	printk (KERN_INFO "[STORAGE EPOCH] (%s) PID : %d Device "
+				//		": %d Dec Epoch Count : %d\n"
+				//		,__func__,bio->storage_epoch->task->pid
+				//		,bio->raid_disk_num, 
+				//		(int) atomic_read(&storage_epoch->s_e_count));
+				//}
 			}
 		}
 
