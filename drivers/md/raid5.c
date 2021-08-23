@@ -596,7 +596,7 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 							count++;
 					}	
 					if (raid_epoch->pending == count) {
-						set_bit(STRIPE_CACHE_BARRIER, &sh->state);
+						// set_bit(STRIPE_CACHE_BARRIER, &sh->state);
 						barrier_array[i] = obi->shadow_pid;
 						raid_epoch_array[i] = obi->raid_epoch;
 					}
@@ -834,6 +834,7 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 	}
 
 	/* SW Modified : The part of patent named "Cache Barrier Stripe" */
+	/*
 	for (i = disks; i--; ) {
 		if (barrier_array[i]) {
 			for (k = disks; k--; ) {
@@ -867,6 +868,7 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 			}
 		}
 	}
+	*/
 	kfree(raid_epoch_array);
 	kfree(bdisk_num_array);
 	kfree(barrier_array);
@@ -3271,12 +3273,12 @@ static void handle_stripe_clean_event(struct r5conf *conf,
 				wbi = dev->written;
 				BUG_ON (!wbi);
 				dev->written = NULL;
-				printk (KERN_INFO "[SWDEBUG] (%s) bi : %p\n"
-						,__func__, wbi);
 				while (wbi && wbi->bi_sector <
 					dev->sector + STRIPE_SECTORS) {
-					printk(KERN_INFO "[SWDEBUG] (%s) Sector : %d\n"
-						,__func__, wbi->bi_sector);
+					printk(KERN_INFO "[SWDEBUG] (%s) Bi : %p Dispatch Check %d "
+						"Sector : %d\n"
+						,__func__, wbi, atomic_read(&wbi->dispatch_check),
+						wbi->bi_sector);
 					wbi2 = r5_next_bio(wbi, dev->sector);
 					if (!raid5_dec_bi_active_stripes(wbi)) {
 						printk(KERN_INFO "[SWDEBUG] (%s) Return BI!\n"
