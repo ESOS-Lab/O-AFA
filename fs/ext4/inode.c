@@ -2614,10 +2614,10 @@ retry:
 					raid_epoch->barrier = 1;
 					current->__raid_epoch = NULL;
 					atomic_dec(&raid_epoch->e_count);
-					printk(KERN_INFO "[RAID EPOCH] (%s) PID : %d Finish Epoch!"
-                					" E_Count : %d\n"                          
-        						,__func__, current->pid,
-							atomic_read(&raid_epoch->e_count));
+					//printk(KERN_INFO "[RAID EPOCH] (%s) PID : %d Finish Epoch!"
+                			//		" E_Count : %d\n"                          
+        				//		,__func__, current->pid,
+					//		atomic_read(&raid_epoch->e_count));
 				}
 				spin_unlock_irqrestore(&raid_epoch->raid_epoch_lock, flags);
 			}

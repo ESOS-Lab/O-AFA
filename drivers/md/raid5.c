@@ -2268,7 +2268,21 @@ EXPORT_SYMBOL(raid5_end_dbarrier_request);
 
 static void raid5_end_fs_dbarrier(struct bio *bi, int error)
 {
-		
+	struct md_rdev *uninitialized_var(rdev);
+	struct r5conf *conf;	
+	struct mddev *mddev;
+	mddev = bi->bi_private;
+	conf = mddev->private;
+
+	/* Call bio_end_io to finish wait when cache barrier stripe is all arrived */
+	if (atomic_dec_and_test(&bi->obi->dispatch_check)) {
+		bio_endio(bi->obi, 0);	
+	}
+
+	rdev = conf->disks[bi->raid_disk_num].rdev;
+	bio_put(bi);
+	rdev_dec_pending(rdev, conf->mddev);
+	return;
 }
 
 void raid5_end_write_request(struct bio *bi, int error)
@@ -4764,7 +4778,7 @@ static void raid5_barrier_request (struct mddev *mddev, struct r5conf *conf, str
 		bi->raid_dispatch = 0;
 		bi->raid_disk_num = i;
 		bi->obi = bio;
-		atomic_inc(&bio->dbarrier_check);
+		atomic_inc(&bio->dispatch_check);
 		bi->bi_end_io = raid5_end_fs_dbarrier;
 		bio_get(bi);
 		atomic_inc(&rdev->nr_pending);
@@ -4785,12 +4799,10 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 	int remaining;
 
 	/* Dummy Barrier Request */
-	/*
 	if (unlikely(atomic_read(&bi->dbarrier_check))) {
 		raid5_barrier_request(mddev, conf, bi);
 		return;
 	}
-	*/
 	
 	if (unlikely(bi->bi_rw & REQ_FLUSH)) {
 		md_flush_request(mddev, bi);

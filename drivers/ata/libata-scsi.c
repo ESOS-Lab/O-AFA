@@ -1862,7 +1862,7 @@ early_finish:
 
 err_did:
 	ata_qc_free(qc);
-	cmd->result = (DID_ERROR << 16);
+	cmd->result = scsi_bufflen(cmd) < 1 ? DID_OK : (DID_ERROR << 16);
 	cmd->scsi_done(cmd);
 err_mem:
 	DPRINTK("EXIT - internal\n");

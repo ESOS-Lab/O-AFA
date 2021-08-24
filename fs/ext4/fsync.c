@@ -272,9 +272,9 @@ int ext4_fbarrier_file(struct file *file, loff_t start, loff_t end, int datasync
 		needs_barrier = true;
 	
 	if (needs_barrier) {
-		// blkdev_issue_barrier(inode->i_sb->s_bdev, GFP_KERNEL, NULL);
-		current->barrier_fail = 0;
 		printk(KERN_ERR, "[FileSystem] (%s) Barrier Fail!\n",__func__);
+		blkdev_issue_barrier(inode->i_sb->s_bdev, GFP_KERNEL, NULL);
+		current->barrier_fail = 0;
 		goto out;
 	}
 	
