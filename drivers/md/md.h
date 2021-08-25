@@ -427,8 +427,6 @@ struct mddev {
 	void (*sync_super)(struct mddev *mddev, struct md_rdev *rdev);
 
 	/* SW Modified */
-	// spinlock_t			raid_epoch_table_lock;
-	//DECLARE_HASHTABLE(raid_epoch_table, 7);	/* Master Hash Table */
 	mempool_t			*raid_epoch_pool;
 };
 
@@ -448,21 +446,6 @@ struct raid_epoch_node {
 	struct list_head	node;
 	struct raid_epoch	*raid_epoch;
 };
-
-/*
-static inline void get_raid_epoch(struct raid_epoch *raid_epoch)
-{
-	atomic_inc(&raid_epoch->e_count);
-}
-*/
-
-/*
-static inline void put_raid_epoch(struct raid_epoch *raid_epoch)
-{
-	smp_mb__before_atomic_dec();
-	atomic_dec(&raid_epoch->e_count);
-}
-*/
 
 static inline void rdev_dec_pending(struct md_rdev *rdev, struct mddev *mddev)
 {
