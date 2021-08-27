@@ -1470,10 +1470,6 @@ void raid_request_dispatched(struct request *req)
 			//}
                 }
 
-		// if (wbi && wbi->raid_epoch)
-		//	printk(KERN_INFO "[RAID EPOCH] (%s) PID : %d P_Page Check %d\n"
-		//			,__func__, wbi->raid_epoch->pid,
-		//			atomic_read(&pdev->req.dispatch_check));
 		if (wbi && atomic_read(&pdev->req.dispatch_check)) { /* Case of Data Page */
 			/* Pass over the work to the last arrived request */
 			if (test_bit(STRIPE_CACHE_BARRIER, &sh->state)) {
@@ -2237,6 +2233,32 @@ void raid5_end_dbarrier_request(struct bio *bi, int error)
 	if (!atomic_cmpxchg(&bi->dispatch_check,0,1)) {
 		if(atomic_dec_and_test(&bi->raid_epoch->dbarrier_count)) {
         		clear_bit(STRIPE_CACHE_BARRIER, &sh->state);
+			for (i = sh->disks; i--;) {
+        			if (i == sh->pd_idx)
+                			continue;
+        			//printk(KERN_INFO "[RAID EPOCH] (%s) PID : %d "
+        			//              "Db_Count : %d"
+        			//              " %llu : %d "
+        			//              ,__func__
+        			//      ,bio->raid_epoch->task->pid,
+        			//      atomic_read(&bio->raid_epoch->dbarrier_count
+        			//      ,(unsigned long long) sh->sector, 
+        			//      bio->raid_disk_num);
+        			dev = &sh->dev[i];
+        			wbi = dev->written;
+        			while (wbi && wbi->bi_sector <
+                			dev->sector + STRIPE_SECTORS
+                			&& atomic_read(&dev->req.dispatch_check)) {
+	
+ 	        	       		__raid_request_dispatched(wbi,
+        	        			wbi->bi_sector, dev->sector);
+                			if (dispatch_bio_bh(wbi)) {
+                        			wbi = r5_next_bio(wbi, dev->sector);
+                        			continue;
+                			}
+                			wbi = r5_next_bio(wbi, dev->sector);
+        			}
+			}
 		}
 		struct raid_epoch *raid_epoch = bi->raid_epoch;
 		if (atomic_dec_and_test(&raid_epoch->e_count)

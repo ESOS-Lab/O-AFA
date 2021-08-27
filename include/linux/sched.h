@@ -1482,6 +1482,7 @@ struct task_struct {
         //struct epoch *__epoch;
 	unsigned int barrier_fail;
 	unsigned int epoch_fail;
+	unsigned int allocating_write;
 	//struct list_head epoch_pending;
 	//struct list_head epoch_dispatch;
 	//struct list_head epoch_complte;

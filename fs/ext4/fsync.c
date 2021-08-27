@@ -129,12 +129,11 @@ int ext4_sync_file(struct file *file, loff_t start, loff_t end, int datasync)
 	trace_ext4_sync_file_enter(file, datasync);
 
 	if (datasync) {
-		// current->barrier_fail = 0;
-	        // ret = filemap_ordered_write_range(inode->i_mapping, start, end);
-		// if (current->barrier_fail)
-		//	needs_barrier = true;
-		// ret = filemap_fdatadispatch_range(inode->i_mapping, start, end);
-	        ret = filemap_write_and_wait_range(inode->i_mapping, start, end);
+		current->barrier_fail = 0;
+	        ret = filemap_ordered_write_range(inode->i_mapping, start, end);
+		if (current->barrier_fail)
+			needs_barrier = true;
+		ret = filemap_fdatadispatch_range(inode->i_mapping, start, end);
 	}
 	else
 	        ret = filemap_write_and_dispatch_range(inode->i_mapping, start, end);
@@ -189,7 +188,7 @@ int ext4_sync_file(struct file *file, loff_t start, loff_t end, int datasync)
 	ret = jbd2_complete_cpsetup_transaction(journal, commit_tid);
 	
 	if (needs_barrier) {
-		filemap_fdatawait_range(inode->i_mapping, start, end);
+		// filemap_fdatawait_range(inode->i_mapping, start, end);
 		err = blkdev_issue_flush(inode->i_sb->s_bdev, GFP_KERNEL, NULL);
 		if (!ret)
 			ret = err;

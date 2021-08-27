@@ -1988,7 +1988,8 @@ void jbd2_journal_cpsetup_transaction(journal_t *journal)
 
 
 	while (!list_empty(&commit_transaction->io_bufs)) {
-		struct buffer_head *bh = list_entry(commit_transaction->io_bufs.prev, struct buffer_head, b_assoc_buffers);
+		struct buffer_head *bh = list_entry(commit_transaction->io_bufs.prev, 
+						struct buffer_head, b_assoc_buffers);
 	 
 		wait_on_buffer(bh);
 		if (unlikely(!buffer_uptodate(bh)))

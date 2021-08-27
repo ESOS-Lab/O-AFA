@@ -1665,6 +1665,8 @@ static void mpage_da_map_and_submit(struct mpage_da_data *mpd)
 	     !(mpd->b_state & (1 << BH_Unwritten))))
 		goto submit_io;
 
+	current->allocating_write = 1;
+
 	handle = ext4_journal_current_handle();
 	BUG_ON(!handle);
 
@@ -2288,7 +2290,8 @@ static int write_cache_pages_da(handle_t *handle,
 	index = wbc->range_start >> PAGE_CACHE_SHIFT;
 	end = wbc->range_end >> PAGE_CACHE_SHIFT;
 
-	if (wbc->sync_mode == WB_SYNC_ALL || /* UFS */ wbc->sync_mode == WB_ORDERED_ALL || wbc->sync_mode == WB_BARRIER_ALL || wbc->tagged_writepages)
+	if (wbc->sync_mode == WB_SYNC_ALL || /* UFS */ wbc->sync_mode == WB_ORDERED_ALL 
+		|| wbc->sync_mode == WB_BARRIER_ALL || wbc->tagged_writepages)
 		tag = PAGECACHE_TAG_TOWRITE;
 	else
 		tag = PAGECACHE_TAG_DIRTY;
@@ -2468,6 +2471,8 @@ static int ext4_da_writepages(struct address_space *mapping,
 	if (unlikely(sbi->s_mount_flags & EXT4_MF_FS_ABORTED))
 		return -EROFS;
 
+	current->allocating_write = 0;
+
 	if (wbc->range_start == 0 && wbc->range_end == LLONG_MAX)
 		range_whole = 1;
 
@@ -2595,7 +2600,10 @@ retry:
 			break;
 	}
 	/* UFS */
-	if (wbc->sync_mode == WB_BARRIER_ALL) {
+	/* SW Modified : In the case of allocating write, we don't need to set barrier flag 
+	 * 		 Since JBD2 issue barrier block I/O 				    
+	 */
+	if (!current->allocating_write && wbc->sync_mode == WB_BARRIER_ALL) {
 		/* SW Modified: Check if this bdev is raid or not */
 		dev_t unit = inode->i_sb->s_dev;
 		struct mddev *mddev = mddev_find(unit);
