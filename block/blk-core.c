@@ -1553,14 +1553,6 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 		struct task_struct *task = bio->raid_epoch ? 
 						bio->raid_epoch->task : current;
 		
-		if (task->pid < 0) {
-			printk(KERN_INFO "[STORAGE EPOCH] (%s) Current : %p Task : %p"
-					"Name : %s PID :%d "
-					"Storage List : %p\n"
-					,__func__, current, task, task->comm
-					,task->pid, &task->storage_list);
-		}
-	
 		/* Access Storage List */
 		list_for_each(ptr, &task->storage_list) {
 			storage_epoch = list_entry(ptr, struct storage_epoch, list);

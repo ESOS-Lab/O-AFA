@@ -1128,7 +1128,7 @@ print_graph_return(struct ftrace_graph_ret *trace, struct trace_seq *s,
 	 * the '}' and letting the user guess what function this
 	 * belongs to, write out the function name.
 	 */
-	if (func_match) {
+	if (false) {
 		ret = trace_seq_printf(s, "}\n");
 		if (!ret)
 			return TRACE_TYPE_PARTIAL_LINE;
