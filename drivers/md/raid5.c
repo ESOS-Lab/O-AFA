@@ -1335,7 +1335,8 @@ static void __raid_request_dispatched(struct bio *bio, sector_t bio_sector, sect
 
 		if(clen > 0) {
 			bio_page = bvl->bv_page;
-			if(bio_page) /* SW Modified : Wake up Tracked Page */
+			if(bio_page && PageDispatch(bio_page)) 
+				/* SW Modified : Wake up Tracked Page */
 				end_page_dispatch(bio_page);
 		}
 

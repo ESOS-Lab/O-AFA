@@ -1573,7 +1573,7 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
                                                                 
 			spin_lock_init(&storage_epoch->s_e_lock);                       
 			atomic_set(&storage_epoch->s_e_count, 0);                      
-			INIT_LIST_HEAD(&storage_epoch->list);                      
+			// INIT_LIST_HEAD(&storage_epoch->list);                      
                                                                 
 			list_add_tail(&storage_epoch->list, &task->storage_list);
                                                                 
@@ -3262,7 +3262,7 @@ void blk_request_dispatched(struct request *req)
 		for (i=0; i < bio->bi_vcnt; i++) {
 			struct bio_vec *bvec = &bio->bi_io_vec[i];
 			struct page *page = bvec->bv_page;
-			if (page)
+			if (page && PageDispatch(page))
 				end_page_dispatch(page);
 		}
 
