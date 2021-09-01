@@ -2605,34 +2605,26 @@ retry:
 	 */
 	if (!current->allocating_write && wbc->sync_mode == WB_BARRIER_ALL) {
 		/* SW Modified: Check if this bdev is raid or not */
-		/*
-		dev_t unit = inode->i_sb->s_dev;
-		struct mddev *mddev = mddev_find(unit);
-		struct raid_epoch *raid_epoch;
 		unsigned long flags;
-		if (mddev) { 
-			struct raid_epoch *raid_epoch = current->__raid_epoch;
-			if (!raid_epoch)
+		struct raid_epoch *raid_epoch = current->__raid_epoch;
+		if (raid_epoch) {
+			current->barrier_fail = 1;
+			spin_lock_irqsave(&raid_epoch->raid_epoch_lock, flags);
+			if (!raid_epoch->pending) {
 				current->barrier_fail = 1;
-			else {
-				spin_lock_irqsave(&raid_epoch->raid_epoch_lock, flags);
-				if (!raid_epoch->pending) {
-					current->barrier_fail = 1;
-				}
-				else {
-					raid_epoch->barrier = 1;
-					current->__raid_epoch = NULL;
-					atomic_dec(&raid_epoch->e_count);
-					//printk(KERN_INFO "[RAID EPOCH] (%s) PID : %d Finish Epoch!"
-                			//		" E_Count : %d\n"                          
-        				//		,__func__, current->pid,
-					//		atomic_read(&raid_epoch->e_count));
-				}
-				spin_unlock_irqrestore(&raid_epoch->raid_epoch_lock, flags);
 			}
+			else {
+				raid_epoch->barrier = 1;
+				current->__raid_epoch = NULL;
+				atomic_dec(&raid_epoch->e_count);
+				//printk(KERN_INFO "[RAID EPOCH] (%s) PID : %d Finish Epoch!"
+                		//		" E_Count : %d\n"                          
+        			//		,__func__, current->pid,
+				//		atomic_read(&raid_epoch->e_count));
+			}
+			spin_unlock_irqrestore(&raid_epoch->raid_epoch_lock, flags);
 		}
 		else
-		*/
 			blk_issue_barrier_plug(&plug);
 	}
 
