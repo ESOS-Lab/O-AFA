@@ -735,7 +735,7 @@ blk_init_allocated_queue(struct request_queue *q, request_fn_proc *rfn,
 
 	/* UFS */
 	if (!q->epoch_pool)
-		q->epoch_pool = mempool_create_node(BLKDEV_MIN_RQ, mempool_alloc_slab,
+		q->epoch_pool = mempool_create_node(BLKDEV_MAX_RQ, mempool_alloc_slab,
 				mempool_free_slab, epoch_cachep, GFP_NOFS, q->node);
 	if (!q->epoch_pool) {
 		printk(KERN_ERR "epoch_pool create error\n");
@@ -1561,7 +1561,9 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 		}
 		
 		if (!storage_epoch) {
-			storage_epoch = kzalloc(sizeof(struct storage_epoch), GFP_NOIO);
+			storage_epoch = mempool_alloc(q->epoch_pool, GFP_NOFS);
+			
+			memset(storage_epoch, 0, sizeof(struct storage_epoch));
 
 			storage_epoch->task = task;
 			storage_epoch->q = q;
@@ -1573,10 +1575,10 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
                                                                 
 			spin_lock_init(&storage_epoch->s_e_lock);                       
 			atomic_set(&storage_epoch->s_e_count, 0);                      
-			// INIT_LIST_HEAD(&storage_epoch->list);                      
+			INIT_LIST_HEAD(&storage_epoch->list);     
                                                                 
 			list_add_tail(&storage_epoch->list, &task->storage_list);
-                                                                
+			
 			atomic_inc(&storage_epoch->s_e_count); 
 			// if (bio->raid_epoch) {
 			//	printk(KERN_INFO "[STORAGE EPOCH] (%s) PID : %d Device : %d "
@@ -1604,6 +1606,7 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 			bio->storage_epoch->barrier = 1;
 			atomic_dec(&storage_epoch->s_e_count);
 			list_del(&storage_epoch->list);
+
 			//if (bio->raid_epoch) {
 			//	printk(KERN_INFO "[STORAGE EPOCH] (%s) PID : %d Device : %d "
 			//				"Epoch Count : %d "
@@ -3207,7 +3210,7 @@ void blk_issue_barrier_plug(struct blk_plug *plug)
 	struct storage_epoch *storage_epoch = NULL;
 	struct list_head *ptr, *ptrn;
 	
-	list_for_each(ptr, &current->storage_list) {
+	list_for_each_safe(ptr, ptrn, &current->storage_list) {
 		storage_epoch = list_entry(ptr, struct storage_epoch, list);
 		if (storage_epoch->pending) {
 			storage_epoch->barrier = 1;
@@ -3247,7 +3250,7 @@ void blk_request_dispatched(struct request *req)
 					//	"PID : %d Device : %d ClearEpoch!\n"
 					//	,__func__,bio->storage_epoch->task->pid
 					//	,bio->raid_disk_num);
-					kfree(storage_epoch);
+					mempool_free(storage_epoch, storage_epoch->q->epoch_pool);
 				}
 				//else {
 				//	printk (KERN_INFO "[STORAGE EPOCH] (%s) PID : %d Device "
@@ -3440,7 +3443,7 @@ int __init blk_dev_init(void)
 
 	/* UFS: epoch slab init */
 	epoch_cachep = kmem_cache_create("blkdev_epoch", 
-			sizeof(struct epoch), 0, SLAB_PANIC, NULL);
+			sizeof(struct storage_epoch), 0, SLAB_PANIC, NULL);
 	epoch_link_cachep = kmem_cache_create("blkdev_epoch_link",
 			sizeof(struct epoch_link), 0, SLAB_PANIC, NULL);
 	return 0;
