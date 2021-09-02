@@ -1829,7 +1829,7 @@ static int ata_scsi_translate(struct ata_device *dev, struct scsi_cmnd *cmd,
 	if (cmd->sc_data_direction == DMA_FROM_DEVICE ||
 	    cmd->sc_data_direction == DMA_TO_DEVICE) {
 		if (unlikely(scsi_bufflen(cmd) < 1)) {
-			ata_dev_warn(dev, "WARNING: zero len r/w req\n");
+			// ata_dev_warn(dev, "WARNING: zero len r/w req\n");
 			goto err_did;
 		}
 

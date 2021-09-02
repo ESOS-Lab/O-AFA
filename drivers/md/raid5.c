@@ -2249,7 +2249,8 @@ void raid5_end_dbarrier_request(struct bio *bi, int error)
         			wbi = dev->written;
         			while (wbi && wbi->bi_sector <
                 			dev->sector + STRIPE_SECTORS
-                			&& atomic_read(&dev->req.dispatch_check)) {
+                			&& atomic_read(&dev->req.dispatch_check)
+					&& test_bit(R5_LOCKED,&sh->dev[i].flags)) {
 	
  	        	       		__raid_request_dispatched(wbi,
         	        			wbi->bi_sector, dev->sector);

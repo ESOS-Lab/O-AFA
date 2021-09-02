@@ -40,7 +40,6 @@ struct bio {
 	struct block_device	*bi_bdev;
 	unsigned long		bi_flags;	/* status, command, etc */
 	unsigned long long	bi_rw;		/* UFS */
-        struct epoch            *bi_epoch;      /* UFS epoch */
 	struct storage_epoch	*storage_epoch;	/* SW Modified */
 	struct raid_epoch	*raid_epoch; 	/* SW Modified */
 	/*unsigned long		bi_rw;*/		/* bottom bits READ/WRITE,
