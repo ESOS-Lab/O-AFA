@@ -1561,7 +1561,9 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 		}
 		
 		if (!storage_epoch) {
-			storage_epoch = kzalloc(sizeof(struct storage_epoch), GFP_NOFS);
+			storage_epoch = mempool_alloc(q->epoch_pool, GFP_NOFS);
+
+			memset(storage_epoch, 0 ,sizeof(struct storage_epoch));
 
 			storage_epoch->task = task;
 			storage_epoch->q = q;
@@ -3250,7 +3252,7 @@ void blk_request_dispatched(struct request *req)
 					//	"PID : %d Device : %d ClearEpoch!\n"
 					//	,__func__,bio->storage_epoch->task->pid
 					//	,bio->raid_disk_num);
-					kfree(storage_epoch);
+					mempool_free(storage_epoch, storage_epoch->q->epoch_pool);
 				}
 				//else {
 				//	printk (KERN_INFO "[STORAGE EPOCH] (%s) PID : %d Device "
