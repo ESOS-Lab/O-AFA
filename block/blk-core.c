@@ -1580,6 +1580,8 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 			list_add_tail(&storage_epoch->list, &task->storage_list);
 			
 			atomic_inc(&storage_epoch->s_e_count); 
+			// printk(KERN_INFO "[SWDEBUG] (%s) PID : %d Alloc Epoch %p\n"
+			//			,__func__, current->pid, storage_epoch);
 			// if (bio->raid_epoch) {
 			//	printk(KERN_INFO "[STORAGE EPOCH] (%s) PID : %d Device : %d "
 			//				"Epoch Count : %d "
@@ -3248,10 +3250,10 @@ void blk_request_dispatched(struct request *req)
 				struct storage_epoch *storage_epoch;
 				storage_epoch = bio->storage_epoch;
 				if (atomic_dec_and_test(&storage_epoch->s_e_count)) {
-					//printk(KERN_INFO "[STORAGE EPOCH] (%s)"
-					//	"PID : %d Device : %d ClearEpoch!\n"
+					//printk(KERN_INFO "[SWDEBUG] (%s)"
+					//	"PID : %d ClearEpoch : %p\n"
 					//	,__func__,bio->storage_epoch->task->pid
-					//	,bio->raid_disk_num);
+					//	,bio->storage_epoch);
 					mempool_free(storage_epoch, storage_epoch->q->epoch_pool);
 				}
 				//else {

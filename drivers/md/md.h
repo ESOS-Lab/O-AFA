@@ -433,6 +433,7 @@ struct mddev {
 /* SW Modified */
 struct raid_epoch {
 	struct task_struct	*task;
+	struct mddev 		*mddev;
 	
 	unsigned int 		barrier;
 	unsigned int 		pending;

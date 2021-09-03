@@ -60,6 +60,8 @@
 #include <asm/pgtable.h>
 #include <asm/mmu_context.h>
 
+#include "../drivers/md/md.h"
+
 static void exit_mm(struct task_struct * tsk);
 
 static void __unhash_process(struct task_struct *p, bool group_dead)
@@ -718,6 +720,8 @@ void do_exit(long code)
 	struct task_struct *tsk = current;
 	int group_dead, i;
 	struct hlist_node *tmp;
+	struct storage_epoch *storage_epoch = NULL;
+	struct list_head *ptr;
 
 	profile_task_exit(tsk);
 
@@ -802,6 +806,17 @@ void do_exit(long code)
 
 	exit_sem(tsk);
 	exit_shm(tsk);
+	
+	if (tsk->__raid_epoch) {
+		struct raid_epoch *raid_epoch = tsk->__raid_epoch;
+		mempool_free(raid_epoch, raid_epoch->mddev->raid_epoch_pool);
+	}
+	
+	list_for_each(ptr, &tsk->storage_list) {
+		storage_epoch = list_entry(ptr, struct storage_epoch, list);
+		mempool_free(storage_epoch, storage_epoch->q->epoch_pool);
+	}
+
 	exit_files(tsk);
 	exit_fs(tsk);
 
