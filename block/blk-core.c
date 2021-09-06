@@ -1554,11 +1554,11 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 						bio->raid_epoch->task : current;
 		
 		/* Access Storage List */
-		printk(KERN_INFO "[TRY ACQUIRE-Traverse] (%s) PID : %d OPID : %d\n"
-					,__func__,current->pid,task->pid);
+		//printk(KERN_INFO "[TRY ACQUIRE-Traverse] (%s) PID : %d OPID : %d\n"
+		//			,__func__,current->pid,task->pid);
 		spin_lock_irqsave(&task->slist_lock, flags);
-		printk(KERN_INFO "[LOCK ACQUIRED-Traverse] (%s) PID : %d OPID : %d\n"
-					,__func__,current->pid,task->pid);
+		//printk(KERN_INFO "[LOCK ACQUIRED-Traverse] (%s) PID : %d OPID : %d\n"
+		//			,__func__,current->pid,task->pid);
 		// storage_epoch = task->__cache_epoch;
 		storage_epoch = NULL;
 		if(!storage_epoch) {
@@ -1580,8 +1580,8 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 			}
 		}
 		spin_unlock_irqrestore(&task->slist_lock,flags);
-		printk(KERN_INFO "[LOCK RELEASED-Traverse] (%s) PID : %d OPID : %D\n"
-					,__func__,current->pid,task->pid);
+		//printk(KERN_INFO "[LOCK RELEASED-Traverse] (%s) PID : %d OPID : %d\n"
+		//			,__func__,current->pid,task->pid);
 		
 		if (!storage_epoch) {
 			storage_epoch = mempool_alloc(q->epoch_pool, GFP_NOFS);
@@ -1600,16 +1600,16 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 			atomic_set(&storage_epoch->s_e_count, 0);                      
 			INIT_LIST_HEAD(&storage_epoch->list);     
                                                                 
-			printk(KERN_INFO "[TRY ACQUIRE-Alloc] (%s) PID : %d OPID : %d\n"
-					,__func__,current->pid,task->pid);
+			//printk(KERN_INFO "[TRY ACQUIRE-Alloc] (%s) PID : %d OPID : %d\n"
+			//		,__func__,current->pid,task->pid);
 			spin_lock_irqsave(&task->slist_lock, flags);
-			printk(KERN_INFO "[ACQUIRED-Alloc] (%s) PID : %d OPID : %d\n"
-					,__func__,current->pid,task->pid);
+			//printk(KERN_INFO "[ACQUIRED-Alloc] (%s) PID : %d OPID : %d\n"
+			//		,__func__,current->pid,task->pid);
 			list_add_tail(&storage_epoch->list, &task->storage_list);
 			// task->__cache_epoch = storage_epoch;	
-			spin_unlock_irqrestore(&task->slist_lock, flags);
-			printk(KERN_INFO "[RELEASED-Alloc] (%s) PID : %d OPID : %d\n"
-					,__func__,current->pid,task->pid);
+			//spin_unlock_irqrestore(&task->slist_lock, flags);
+			//printk(KERN_INFO "[RELEASED-Alloc] (%s) PID : %d OPID : %d\n"
+			//		,__func__,current->pid,task->pid);
 			
 			atomic_inc(&storage_epoch->s_e_count); 
 		
@@ -1651,16 +1651,16 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 		if (bio->bi_rw & REQ_BARRIER) {
 			bio->storage_epoch->barrier = 1;
 			atomic_dec(&storage_epoch->s_e_count);
-			printk(KERN_INFO "[TRY ACQUIRE-Delete] (%s) PID : %d OPID : %d\n"
-					,__func__,current->pid,task->pid);
+			//printk(KERN_INFO "[TRY ACQUIRE-Delete] (%s) PID : %d OPID : %d\n"
+			//		,__func__,current->pid,task->pid);
 			spin_lock_irqsave(&task->slist_lock,flags);
-			printk(KERN_INFO "[ACQUIRED-Delete] (%s) PID : %d OPID : %d\n"
-					,__func__,current->pid,task->pid);
+			//printk(KERN_INFO "[ACQUIRED-Delete] (%s) PID : %d OPID : %d\n"
+			//		,__func__,current->pid,task->pid);
 			list_del(&storage_epoch->list);
 			// task->__cache_epoch = NULL;
 			spin_unlock_irqrestore(&task->slist_lock,flags);
-			printk(KERN_INFO "[RELEASED-Delete] (%s) PID : %d OPID : %d\n"
-					,__func__,current->pid,task->pid);
+			//printk(KERN_INFO "[RELEASED-Delete] (%s) PID : %d OPID : %d\n"
+			//		,__func__,current->pid,task->pid);
 
 			//spin_lock(&task->list_lock);
 	                //list_for_each(ptr,&task->storage_list) {
