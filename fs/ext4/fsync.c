@@ -207,7 +207,6 @@ int ext4_fbarrier_file(struct file *file, loff_t start, loff_t end, int datasync
 	
 	trace_ext4_sync_file_enter(file, datasync);
 
-	/*
 	if (datasync) {
 		current->barrier_fail = 0;
 		ret = filemap_ordered_write_range(inode->i_mapping, start, end);
@@ -216,7 +215,6 @@ int ext4_fbarrier_file(struct file *file, loff_t start, loff_t end, int datasync
 		ret = filemap_fdatadispatch_range(inode->i_mapping, start, end);
 	}
 	else
-	*/
 		ret = filemap_write_and_dispatch_range(inode->i_mapping, start, end);
 	
 	if (ret)
@@ -263,8 +261,9 @@ int ext4_fbarrier_file(struct file *file, loff_t start, loff_t end, int datasync
 		needs_barrier = true;
 	
 	if (needs_barrier) {
-		// printk(KERN_ERR "[FileSystem] (%s) Barrier Fail!\n",__func__);
-		blkdev_issue_barrier(inode->i_sb->s_bdev, GFP_KERNEL, NULL);
+		//printk(KERN_ERR "[FileSystem] (%s) PID : %d Barrier Fail!\n"
+		//			,__func__,current->pid);
+		//blkdev_issue_barrier(inode->i_sb->s_bdev, GFP_KERNEL, NULL);
 		current->barrier_fail = 0;
 		goto out;
 	}

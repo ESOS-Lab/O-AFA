@@ -314,7 +314,7 @@ static struct task_struct *dup_task_struct(struct task_struct *orig)
 	// tsk->epoch = 0;
 	// tsk->__epoch = 0;
 	INIT_LIST_HEAD(&tsk->storage_list);
-	spin_lock_init(&tsk->list_lock);
+	spin_lock_init(&tsk->slist_lock);
 	tsk->barrier_fail = 0;
 	tsk->epoch_fail = 0;
 	tsk->__raid_epoch = NULL;

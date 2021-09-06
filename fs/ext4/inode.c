@@ -2604,7 +2604,6 @@ retry:
 	 * 		 Since JBD2 issue barrier block I/O 				    
 	 */
 	if (!current->allocating_write && wbc->sync_mode == WB_BARRIER_ALL) {
-		/* SW Modified: Check if this bdev is raid or not */
 		unsigned long flags;
 		struct raid_epoch *raid_epoch = current->__raid_epoch;
 		if (raid_epoch) {

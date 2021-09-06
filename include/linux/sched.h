@@ -1477,7 +1477,7 @@ struct task_struct {
 #endif
 	/* UFS: epoch structure for task */
 	struct list_head storage_list;
-	spinlock_t list_lock;
+	spinlock_t slist_lock;
 	//struct epoch *epoch;
         //struct epoch *__epoch;
 	unsigned int barrier_fail;
@@ -1490,6 +1490,7 @@ struct task_struct {
 	
 	/* SW Modified */
 	struct raid_epoch *__raid_epoch;
+	struct storage_epoch *__cache_epoch;
 };
 
 /* Future-safe accessor for struct task_struct's cpus_allowed. */

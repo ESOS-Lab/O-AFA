@@ -1554,11 +1554,34 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 						bio->raid_epoch->task : current;
 		
 		/* Access Storage List */
-		list_for_each(ptr, &task->storage_list) {
-			storage_epoch = list_entry(ptr, struct storage_epoch, list);
-			if (storage_epoch->q == q) 
-				break;
+		printk(KERN_INFO "[TRY ACQUIRE-Traverse] (%s) PID : %d OPID : %d\n"
+					,__func__,current->pid,task->pid);
+		spin_lock_irqsave(&task->slist_lock, flags);
+		printk(KERN_INFO "[LOCK ACQUIRED-Traverse] (%s) PID : %d OPID : %d\n"
+					,__func__,current->pid,task->pid);
+		// storage_epoch = task->__cache_epoch;
+		storage_epoch = NULL;
+		if(!storage_epoch) {
+			list_for_each(ptr,&task->storage_list) {
+				storage_epoch = list_entry(ptr, struct storage_epoch, list);
+				if (ptr == 0xdead000000100100) {
+					list_for_each(ptrn, &task->storage_list) {
+						printk(KERN_INFO "[SWDEBUG] (%s) PID : %d ptr : %p"
+								" Epoch : %p\n"
+								,__func__, task->pid, ptrn
+								,bio->raid_epoch);
+					}
+					//panic("Contaminated List!");
+				}
+				if (storage_epoch->q == q) { 
+					//task->__cache_epoch = storage_epoch;	
+					break;
+				}
+			}
 		}
+		spin_unlock_irqrestore(&task->slist_lock,flags);
+		printk(KERN_INFO "[LOCK RELEASED-Traverse] (%s) PID : %d OPID : %D\n"
+					,__func__,current->pid,task->pid);
 		
 		if (!storage_epoch) {
 			storage_epoch = mempool_alloc(q->epoch_pool, GFP_NOFS);
@@ -1577,11 +1600,32 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 			atomic_set(&storage_epoch->s_e_count, 0);                      
 			INIT_LIST_HEAD(&storage_epoch->list);     
                                                                 
+			printk(KERN_INFO "[TRY ACQUIRE-Alloc] (%s) PID : %d OPID : %d\n"
+					,__func__,current->pid,task->pid);
+			spin_lock_irqsave(&task->slist_lock, flags);
+			printk(KERN_INFO "[ACQUIRED-Alloc] (%s) PID : %d OPID : %d\n"
+					,__func__,current->pid,task->pid);
 			list_add_tail(&storage_epoch->list, &task->storage_list);
+			// task->__cache_epoch = storage_epoch;	
+			spin_unlock_irqrestore(&task->slist_lock, flags);
+			printk(KERN_INFO "[RELEASED-Alloc] (%s) PID : %d OPID : %d\n"
+					,__func__,current->pid,task->pid);
 			
 			atomic_inc(&storage_epoch->s_e_count); 
-			// printk(KERN_INFO "[SWDEBUG] (%s) PID : %d Alloc Epoch %p\n"
-			//			,__func__, current->pid, storage_epoch);
+		
+			//spin_lock(&task->list_lock);
+	                //list_for_each(ptr,&task->storage_list) {
+        	        //        storage_epoch = list_entry(ptr, struct storage_epoch, list);
+                	        //if (ptr == 0xdead000000100100) {
+                        	//        list_for_each(ptrn, &task->storage_list) {
+                                //	        printk(KERN_INFO "[SWDEBUG] (%s) PID : %d ptr : %p\n"
+                                //        	                ,__func__, task->pid, ptrn);
+                                //	}
+				//	panic("Contaminated List!");
+                        	//}
+                	//}
+			//spin_unlock(&task->list_lock);
+
 			// if (bio->raid_epoch) {
 			//	printk(KERN_INFO "[STORAGE EPOCH] (%s) PID : %d Device : %d "
 			//				"Epoch Count : %d "
@@ -1601,14 +1645,35 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 		//				,bio->raid_disk_num, 
 		//				atomic_read(&bio->storage_epoch->s_e_count));
 		//}
-		// spin_lock_irqsave(&storage_epoch->s_e_lock, flags);
+		//spin_lock_irqsave(&storage_epoch->s_e_lock, flags);
 		bio->storage_epoch->pending++;
 		
 		if (bio->bi_rw & REQ_BARRIER) {
 			bio->storage_epoch->barrier = 1;
 			atomic_dec(&storage_epoch->s_e_count);
+			printk(KERN_INFO "[TRY ACQUIRE-Delete] (%s) PID : %d OPID : %d\n"
+					,__func__,current->pid,task->pid);
+			spin_lock_irqsave(&task->slist_lock,flags);
+			printk(KERN_INFO "[ACQUIRED-Delete] (%s) PID : %d OPID : %d\n"
+					,__func__,current->pid,task->pid);
 			list_del(&storage_epoch->list);
+			// task->__cache_epoch = NULL;
+			spin_unlock_irqrestore(&task->slist_lock,flags);
+			printk(KERN_INFO "[RELEASED-Delete] (%s) PID : %d OPID : %d\n"
+					,__func__,current->pid,task->pid);
 
+			//spin_lock(&task->list_lock);
+	                //list_for_each(ptr,&task->storage_list) {
+        	        //        storage_epoch = list_entry(ptr, struct storage_epoch, list);
+                	//        if (ptr == 0xdead000000100100) {
+                        //	        list_for_each(ptrn, &task->storage_list) {
+                        //        	        printk(KERN_INFO "[SWDEBUG] (%s) PID : %d ptr : %p\n"
+                        //                	                ,__func__, task->pid, ptrn);
+                        //        	}
+			//		panic("Contaminated List!");
+                        //	}	
+                	//}
+			//spin_unlock(&task->list_lock);
 			//if (bio->raid_epoch) {
 			//	printk(KERN_INFO "[STORAGE EPOCH] (%s) PID : %d Device : %d "
 			//				"Epoch Count : %d "
@@ -1618,7 +1683,7 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 			//			,atomic_read(&bio->storage_epoch->s_e_count));
 			//} 
 		}
-		// spin_unlock_irqrestore(&storage_epoch->s_e_lock, flags);
+		//spin_unlock_irqrestore(&storage_epoch->s_e_lock, flags);
 	}
 	/*
 	 * Check if we can merge with the plugged list before grabbing
@@ -3213,6 +3278,10 @@ void blk_issue_barrier_plug(struct blk_plug *plug)
 	struct list_head *ptr, *ptrn;
 	
 	current->barrier_fail = 1;
+	printk(KERN_INFO "[SWDEBUG] (%s) PID : %d Finish All Epoch!\n"
+				,__func__,current->pid);
+	/*
+	spin_lock_irqsave(&current->slist_lock,flags);
 	list_for_each_safe(ptr, ptrn, &current->storage_list) {
 		storage_epoch = list_entry(ptr, struct storage_epoch, list);
 		if (storage_epoch->pending) {
@@ -3224,6 +3293,8 @@ void blk_issue_barrier_plug(struct blk_plug *plug)
 		else
 			current->barrier_fail = 1;
 	}
+	spin_unlock_irqrestore(&current->slist_lock,flags);
+	*/
 }
 EXPORT_SYMBOL(blk_issue_barrier_plug);
 
@@ -3235,8 +3306,7 @@ void blk_request_dispatched(struct request *req)
 	if (req->cmd_type != REQ_TYPE_FS)
 		return;
 
-	//if (!req->__data_len && !(req->cmd_bflags & REQ_ORDERED))
-	if (!req->__data_len)
+	if (!req->__data_len && !(req->cmd_bflags & REQ_ORDERED))
 		return;
 
 	req_bio = req->bio;

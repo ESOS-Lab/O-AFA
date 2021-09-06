@@ -807,16 +807,20 @@ void do_exit(long code)
 	exit_sem(tsk);
 	exit_shm(tsk);
 	
+	/* SW Modified : Cleaning Unfinished Epoch */
 	if (tsk->__raid_epoch) {
 		struct raid_epoch *raid_epoch = tsk->__raid_epoch;
 		mempool_free(raid_epoch, raid_epoch->mddev->raid_epoch_pool);
 	}
 	
+	/*
+	spin_lock(&tsk->list_lock);	
 	list_for_each(ptr, &tsk->storage_list) {
 		storage_epoch = list_entry(ptr, struct storage_epoch, list);
 		mempool_free(storage_epoch, storage_epoch->q->epoch_pool);
 	}
-
+	spin_unlock(&tsk->list_lock);	
+	*/
 	exit_files(tsk);
 	exit_fs(tsk);
 

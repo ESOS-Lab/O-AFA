@@ -526,7 +526,6 @@ int blkdev_issue_barrier(struct block_device *bdev, gfp_t gfp_mask,
 
 	if (!bio_flagged(bio, BIO_UPTODATE))
 		ret = -EIO;
-
 	bio_put(bio);
 	return ret;
 }

@@ -1829,6 +1829,8 @@ static int ata_scsi_translate(struct ata_device *dev, struct scsi_cmnd *cmd,
 	if (cmd->sc_data_direction == DMA_FROM_DEVICE ||
 	    cmd->sc_data_direction == DMA_TO_DEVICE) {
 		if (unlikely(scsi_bufflen(cmd) < 1)) {
+			/* SW Modified */
+			// cmd->request->cmd_flags |= REQ_QUIET;
 			// ata_dev_warn(dev, "WARNING: zero len r/w req\n");
 			goto err_did;
 		}
@@ -1862,7 +1864,8 @@ early_finish:
 
 err_did:
 	ata_qc_free(qc);
-	cmd->result = scsi_bufflen(cmd) < 1 ? DID_OK : (DID_ERROR << 16);
+	// cmd->result = scsi_bufflen(cmd) < 1 ? DID_OK : (DID_ERROR << 16);
+	cmd->result = (DID_ERROR << 16);
 	cmd->scsi_done(cmd);
 err_mem:
 	DPRINTK("EXIT - internal\n");

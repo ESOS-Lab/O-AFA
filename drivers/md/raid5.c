@@ -762,14 +762,14 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 						      sh->dev[i].sector);
 			atomic_set(&bi->dispatch_check, 0);
 
-			// if (bi->bi_rw & REQ_ORDERED)
-			// 	printk(KERN_INFO "[RAID EPOCH] (%s) PID : %d %llu : %d" 
+			//if (bi->bi_rw & REQ_ORDERED)
+			//	printk(KERN_INFO "[RAID EPOCH] (%s) PID : %d %llu : %d" 
 			//		" Flags : %llx\n",
         		//		__func__, 
 			//		bi->raid_epoch->task->pid,
 			//		(unsigned long long)sh->sector,     
         		//		i, bi->bi_rw);                                
-
+			bi->obi = NULL;
 			generic_make_request(bi);
 		}
 		if (rrdev) {
@@ -833,6 +833,7 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 	}
 
 	/* SW Modified : The part of patent named "Cache Barrier Stripe" */
+	
 	for (i = disks; i--; ) {
 		if (barrier_array[i]) {
 			for (k = disks; k--; ) {
@@ -863,11 +864,13 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 			        //	__func__, bi->raid_epoch->task->pid
 				//	, (unsigned long long)sh->sector, 
         			//	k, bi->bi_rw, atomic_read(&bi->raid_epoch->e_count));
+				bi->obi = NULL;
 				generic_make_request(bi);
 				rdev_dec_pending(rdev, conf->mddev);
 			}
 		}
 	}
+	
 	kfree(raid_epoch_array);
 	kfree(bdisk_num_array);
 	kfree(barrier_array);
@@ -1455,11 +1458,11 @@ void raid_request_dispatched(struct request *req)
 			struct raid_epoch *raid_epoch = bio->raid_epoch;
                 	if (atomic_dec_and_test(&raid_epoch->e_count)
 				&& !test_bit(STRIPE_CACHE_BARRIER,&sh->state)) {
-                        	printk(KERN_INFO "[RAID EPOCH] (%s) PID : %d Clear"
-                                		"Epoch! %llu : %d\n",__func__
-						,raid_epoch->task->pid
-                                                ,(unsigned long long) sh->sector
-						,bio->raid_disk_num);
+                        	//printk(KERN_INFO "[RAID EPOCH] (%s) PID : %d Clear"
+                                //		"Epoch! %llu : %d\n",__func__
+				//		,raid_epoch->task->pid
+                                //              ,(unsigned long long) sh->sector
+				//		,bio->raid_disk_num);
 				mempool_free(raid_epoch, mddev->raid_epoch_pool);
                         }
 			//else {
@@ -2266,11 +2269,11 @@ void raid5_end_dbarrier_request(struct bio *bi, int error)
 		struct raid_epoch *raid_epoch = bi->raid_epoch;
 		if (atomic_dec_and_test(&raid_epoch->e_count)
 			&& !test_bit(STRIPE_CACHE_BARRIER, &sh->state)) {
-        		printk(KERN_INFO "[RAID EPOCH] (%s) PID : %d Clear"                
-                        	"Epoch! %llu : %d\n",__func__                      
-                        	,raid_epoch->task->pid                              
-                        	,(unsigned long long) sh->sector                   
-                        	,bi->raid_disk_num);                              
+        		//printk(KERN_INFO "[RAID EPOCH] (%s) PID : %d Clear"                
+                        //	"Epoch! %llu : %d\n",__func__                      
+                        //	,raid_epoch->task->pid                              
+                        //	,(unsigned long long) sh->sector                   
+                        //	,bi->raid_disk_num);                              
 				mempool_free(raid_epoch, mddev->raid_epoch_pool);
 		}                                                                          
 		//else {
@@ -2305,6 +2308,8 @@ static void raid5_end_fs_dbarrier(struct bio *bi, int error)
 	}
 
 	rdev = conf->disks[bi->raid_disk_num].rdev;
+	//if (atomic_read(&bi->bi_cnt) == 1)
+	//	printk(KERN_INFO "[RAID Layer] (%s) Free bi : %p\n",__func__,bi);
 	bio_put(bi);
 	rdev_dec_pending(rdev, conf->mddev);
 	return;
@@ -2386,11 +2391,11 @@ void raid5_end_write_request(struct bio *bi, int error)
 	        struct raid_epoch *raid_epoch = bi->raid_epoch;
 		if (atomic_dec_and_test(&raid_epoch->e_count)
 			&& !test_bit(STRIPE_CACHE_BARRIER, &sh->state)) {
-	                printk(KERN_INFO "[RAID EPOCH] (%s) PID : %d Clear"
-	                                "Epoch! %llu : %d\n",__func__
-	                                ,raid_epoch->task->pid
-	                                ,(unsigned long long) sh->sector
-					  ,bi->raid_disk_num);
+	                //printk(KERN_INFO "[RAID EPOCH] (%s) PID : %d Clear"
+	                //              "Epoch! %llu : %d\n",__func__
+	                //                ,raid_epoch->task->pid
+	                //                ,(unsigned long long) sh->sector
+			//		,bi->raid_disk_num);
 			mempool_free(bi->raid_epoch, mddev->raid_epoch_pool);
        		}
 		//else {
@@ -4797,18 +4802,23 @@ static void raid5_barrier_request (struct mddev *mddev, struct r5conf *conf, str
 		struct md_rdev *rdev;
 		rdev = rcu_dereference(conf->disks[i].rdev);
 		bi = bio_alloc_mddev(GFP_NOIO, 0, mddev);
+		// printk(KERN_INFO "[RAID Layer] (%s) Alloc bi : %p\n",__func__,bi);
 		bi->bi_private = mddev;
 		bi->bi_bdev = rdev->bdev;
-		bi->bi_rw = WRITE_BARRIER;
+		bi->bi_rw = REQ_WRITE | REQ_SYNC | REQ_ORDERED | REQ_BARRIER;
 		bi->raid_dispatch = 0;
 		bi->raid_disk_num = i;
+		bi->shadow_pid = current->pid;
+		bi->raid_epoch = NULL;
+		atomic_set(&bi->dispatch_check, 0);
+		atomic_set(&bi->dbarrier_check, 2);
 		bi->obi = bio;
 		atomic_inc(&bio->dispatch_check);
 		bi->bi_end_io = raid5_end_fs_dbarrier;
-		bio_get(bi);
+		atomic_inc(&rdev->nr_pending);
 		atomic_inc(&rdev->nr_pending);
 		generic_make_request(bi);
-		bio_put(bi);
+		rdev_dec_pending(rdev, mddev);
 	}
 
 	return;
