@@ -595,7 +595,6 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 							count++;
 					}	
 					if (raid_epoch->pending == count) {
-						set_bit(STRIPE_CACHE_BARRIER, &sh->state);
 						barrier_array[i] = obi->shadow_pid;
 						raid_epoch_array[i] = obi->raid_epoch;
 					}
@@ -1385,7 +1384,6 @@ void raid_request_dispatched(struct request *req)
 		if (bio->bi_end_io == raid5_end_dbarrier_request) {
 			/* Handle the case where cache barrier stripe is last arrived */
 			if(atomic_dec_and_test(&bio->raid_epoch->dbarrier_count)) {
-				clear_bit(STRIPE_CACHE_BARRIER, &sh->state);
 				for (i = sh->disks; i--;) {
         				if (i == sh->pd_idx) 
 						continue;
@@ -1402,9 +1400,8 @@ void raid_request_dispatched(struct request *req)
         				while (wbi && wbi->bi_sector <               
                 				dev->sector + STRIPE_SECTORS                 
                 				&& atomic_read(&dev->req.dispatch_check)) {  
-					
 						__raid_request_dispatched(wbi,               
-                        			wbi->bi_sector, dev->sector);               
+                        				wbi->bi_sector, dev->sector);               
                 				if (dispatch_bio_bh(wbi)) {                  
                         				wbi = r5_next_bio(wbi, dev->sector); 
                         				continue;                             
@@ -1419,8 +1416,7 @@ void raid_request_dispatched(struct request *req)
         			/* Need to check the case in which
                 			same sector has double wbi */
         			struct raid_epoch *raid_epoch = bio->raid_epoch;
-        			if (atomic_dec_and_test(&raid_epoch->e_count)
-					&& !test_bit(STRIPE_CACHE_BARRIER,&sh->state)){
+        			if (atomic_dec_and_test(&raid_epoch->e_count)){
         			        //printk(KERN_INFO "[RAID EPOCH] (%s) PID : %d Clear"
                 			//        "Epoch! %llu : %d\n",__func__
                 			//        ,raid_epoch->task->pid
@@ -1456,8 +1452,58 @@ void raid_request_dispatched(struct request *req)
 			/* Need to check the case in which
 				same sector has double wbi */
 			struct raid_epoch *raid_epoch = bio->raid_epoch;
-                	if (atomic_dec_and_test(&raid_epoch->e_count)
-				&& !test_bit(STRIPE_CACHE_BARRIER,&sh->state)) {
+			if (wbi && atomic_read(&pdev->req.dispatch_check)) { /* Case of Data Page */
+				/* Pass over the work to the last arrived request */
+				if (atomic_read(&bio->raid_epoch->dbarrier_count)) {
+					req_bio = bio->bi_next;
+					continue;
+				}
+				while (wbi && wbi->bi_sector <
+					 dev->sector + STRIPE_SECTORS ) { 
+				
+				// printk(KERN_INFO "[RAID EPOCH] (%s) D_Page PID : %d"
+				//		" Wake Up %llu : %d\n"
+				//		,__func__, wbi->shadow_pid, 
+				//		(unsigned long long)sh->sector
+				//		, bio->raid_disk_num);
+			/* SW Modified : Track Dispatched Page using ops_run_biodrain routine */
+
+					__raid_request_dispatched(wbi, 
+						wbi->bi_sector, dev->sector);
+					if (dispatch_bio_bh(wbi)) {
+						wbi = r5_next_bio(wbi, dev->sector);
+						continue;
+					}
+					wbi = r5_next_bio(wbi, dev->sector);
+				}
+			}
+			if (bio->raid_disk_num == sh->pd_idx) { /* Case of Parity Page */
+				for (i = sh->disks; i--;) {
+					if (i == sh->pd_idx)
+						continue;
+					dev = &sh->dev[i];
+					wbi = dev->written;
+					if (wbi && wbi->raid_epoch 
+						&& !atomic_read(&wbi->raid_epoch->dbarrier_count)){
+						while (wbi && wbi->bi_sector <
+         						dev->sector + STRIPE_SECTORS
+         						&& atomic_read(&dev->req.dispatch_check)) {
+					
+							/* SW Modified : Track Dispatched Page 
+							using ops_run_biodrain routine */
+        						__raid_request_dispatched(wbi, 
+								wbi->bi_sector, dev->sector);
+       							if (dispatch_bio_bh(wbi)) {
+               							wbi = r5_next_bio(wbi, dev->sector);
+               							continue;
+       							}
+       							wbi = r5_next_bio(wbi, dev->sector);
+						}				
+					}
+				}
+			}
+		
+                	if (atomic_dec_and_test(&raid_epoch->e_count)) {
                         	//printk(KERN_INFO "[RAID EPOCH] (%s) PID : %d Clear"
                                 //		"Epoch! %llu : %d\n",__func__
 				//		,raid_epoch->task->pid
@@ -1473,62 +1519,6 @@ void raid_request_dispatched(struct request *req)
 			//		bio->raid_disk_num,
                         //                atomic_read(&raid_epoch->e_count));
 			//}
-                }
-
-		if (wbi && atomic_read(&pdev->req.dispatch_check)) { /* Case of Data Page */
-			/* Pass over the work to the last arrived request */
-			if (test_bit(STRIPE_CACHE_BARRIER, &sh->state)) {
-				req_bio = bio->bi_next;
-				continue;
-			}
-			while (wbi && wbi->bi_sector <
-				 dev->sector + STRIPE_SECTORS ) { 
-				
-				// printk(KERN_INFO "[RAID EPOCH] (%s) D_Page PID : %d"
-				//		" Wake Up %llu : %d\n"
-				//		,__func__, wbi->shadow_pid, 
-				//		(unsigned long long)sh->sector
-				//		, bio->raid_disk_num);
-			/* SW Modified : Track Dispatched Page using ops_run_biodrain routine */
-
-				__raid_request_dispatched(wbi, wbi->bi_sector, dev->sector);
-
-				if (dispatch_bio_bh(wbi)) {
-					wbi = r5_next_bio(wbi, dev->sector);
-					continue;
-				}
-				wbi = r5_next_bio(wbi, dev->sector);
-			}
-		}
-		if (bio->raid_disk_num == sh->pd_idx) { /* Case of Parity Page */
-			if (!test_bit(STRIPE_CACHE_BARRIER, &sh->state)) {
-				for (i = sh->disks; i--;) {
-					if (i == sh->pd_idx)
-						continue;
-					dev = &sh->dev[i];
-					wbi = dev->written;
-					while (wbi && wbi->bi_sector <
-         					dev->sector + STRIPE_SECTORS
-         					&& atomic_read(&dev->req.dispatch_check)) {
-					
-						// printk(KERN_INFO "[RAID EPOCH] (%s) P_Page PID : %d"
-						//		" Wake Up %llu "
-						//			": %d\n" ,
-						//		__func__, wbi->shadow_pid, 
-						//		(unsigned long long) sh->sector,i);
-						
-						/* SW Modified : Track Dispatched Page 
-						using ops_run_biodrain routine */
-        					__raid_request_dispatched(wbi, 
-							wbi->bi_sector, dev->sector);
-       						if (dispatch_bio_bh(wbi)) {
-               						wbi = r5_next_bio(wbi, dev->sector);
-               						continue;
-       						}
-       						wbi = r5_next_bio(wbi, dev->sector);
-					}				
-				}
-			}
 		}
 		req_bio = bio->bi_next;
 	}
