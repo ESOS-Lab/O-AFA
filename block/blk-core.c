@@ -1548,7 +1548,9 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 		goto get_rq;
 	}
 
+	bio->storage_epoch = NULL;
 	/* UFS */
+	/*
 	if (bio->bi_rw & REQ_ORDERED) {
 
 		if (in_interrupt()) {
@@ -1558,7 +1560,12 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 		struct task_struct *task = bio->raid_epoch ? 
 						bio->raid_epoch->task : current;
 		
-		/* Access Storage List */
+		if (!task) {
+			printk(KERN_INFO "[SWDEBUG] (%s) Epoch %p Pending : %d\n"
+					,__func__,bio->raid_epoch,bio->raid_epoch->pending);
+		}
+		
+		// Access Storage List 
 		spin_lock(&task->slist_lock);
 		list_for_each(ptr,&task->storage_list) {
 			if (ptr == 0xdead000000100100)
@@ -1631,7 +1638,7 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 			// spin_unlock_irqrestore(&storage_epoch->s_e_lock, flags);
 			atomic_dec(&storage_epoch->s_e_count);
 			spin_lock(&task->slist_lock);
-			list_del(&storage_epoch->list);
+			list_del_init(&storage_epoch->list);
 			list_for_each(ptr,&task->storage_list) {
 				if (ptr == 0xdead000000100100)
 					panic("Raid Epoch : %p Task : %p PID : %d Comm : %s\n"
@@ -1651,6 +1658,7 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 			//} 
 		}
 	}
+	*/
 	/*
 	 * Check if we can merge with the plugged list before grabbing
 	 * any locks.
