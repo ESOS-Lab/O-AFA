@@ -1571,8 +1571,6 @@ static void scsi_request_fn(struct request_queue *q)
 			continue;
 		}
 		
-                req_bio = req->bio;
-
 		/*
 		 * Remove the request from the request list.
 		 */
@@ -1631,14 +1629,17 @@ static void scsi_request_fn(struct request_queue *q)
 		/*
 		 * Dispatch the command to the low-level driver.
 		 */
+		cmd->request->ref_count++;
 		rtn = scsi_dispatch_cmd(cmd);
 		
 		spin_lock_irq(q->queue_lock);
-		if (rtn) 
+		if (rtn) { 
 			goto out_delay;
+		}
 		/* UFS */
 		//if (req->cmd_bflags & REQ_ORDERED)
 		blk_request_dispatched(req);
+		__blk_put_request(q, req);
 	}
 
 	goto out;

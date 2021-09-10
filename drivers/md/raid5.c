@@ -556,23 +556,21 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 	struct mddev *mddev = conf->mddev;
 	int i, k, disks = sh->disks;
 	unsigned long flags;
-	unsigned long long *bdisk_num_array = NULL, *barrier_array = NULL;
+	unsigned long long *bdisk_num_array = NULL;
 	struct raid_epoch **raid_epoch_array = NULL;
+	struct raid_epoch *raid_epoch_null = NULL;
 	
 	might_sleep();
 
-	raid_epoch_array = kmalloc(sizeof(struct raid_epoch *) * disks, GFP_NOIO);
+	raid_epoch_array = kmalloc(disks * sizeof *raid_epoch_null, GFP_NOIO);
 	bdisk_num_array = kmalloc(sizeof(unsigned long long) * disks, GFP_NOIO);	
-	barrier_array = kmalloc(sizeof(unsigned long long) * disks, GFP_NOIO);	
 	
-	if (!raid_epoch_array || !bdisk_num_array || !barrier_array) {
+	memset(raid_epoch_array, 0, sizeof(struct raid_epoch *) * disks);
+	memset(bdisk_num_array, 0, sizeof(unsigned long long) * disks);
+	
+	if (!raid_epoch_array || !bdisk_num_array) {
 		printk(KERN_ERR "Kmalloc Failed!\n");
 		return;
-	}
-
-	for (i = disks; i--; ) {
-		bdisk_num_array[i] = 0;
-		barrier_array[i] = 0;
 	}
 
 	for (i = disks; i--; ) {
@@ -583,7 +581,9 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 			struct raid_epoch *raid_epoch = NULL;
         		if (test_bit(R5_OrderedIO, &sh->dev[i].flags) && obi) { 
 				raid_epoch = obi->raid_epoch;
-				spin_lock_irqsave(&raid_epoch->raid_epoch_lock, flags);
+				if (!raid_epoch)
+					panic("No RAID EPOCH!");
+				spin_lock(&raid_epoch->raid_epoch_lock);
 				if (raid_epoch->barrier) {
 					for (k = i + 1; k--; ) {
 						struct bio *cbi = sh->dev[k].written;
@@ -593,19 +593,17 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 								,__func__, cbi);
 						if (test_bit(R5_OrderedIO, &sh->dev[k].flags) 
 							&& k !=sh->pd_idx 
-							&& sh->dev[k].written->shadow_pid ==
-							obi->shadow_pid)
+							&& sh->dev[k].written->raid_epoch->pid 							     	      == obi->raid_epoch->pid)
 							count++;
 					}	
 					if (raid_epoch->pending == count) {
-						barrier_array[i] = obi->shadow_pid;
 						raid_epoch_array[i] = obi->raid_epoch;
 					}
 				}
 				// SW : Need to Check, What if pending is increased twice 
 				// by calling make_request() twice at the same device of stripe? 
         	        	raid_epoch->pending--;                 
-				spin_unlock_irqrestore(&raid_epoch->raid_epoch_lock, flags);
+				spin_unlock(&raid_epoch->raid_epoch_lock);
         		}
 		}                                                    
 	}                                                            
@@ -624,7 +622,7 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 				rw |= REQ_DISCARD;
 			if (test_and_clear_bit(R5_OrderedIO, &sh->dev[i].flags))
 				rw |= REQ_ORDERED;
-			if (barrier_array[i] != 0) {
+			if (raid_epoch_array[i] != 0) {
 				rw |= REQ_BARRIER;
 				bdisk_num_array[i] |= 1 << i;
 			}
@@ -744,9 +742,7 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 
 			/* SW Modified : Inherit Task and Raid Epoch */
 			if (rw & REQ_ORDERED && i != sh->pd_idx) {
-        			bi->shadow_pid = sh->dev[i].written->shadow_pid;
         			bi->raid_epoch = sh->dev[i].written->raid_epoch;
-        			bi->task = sh->dev[i].written->raid_epoch->task;
 			}
 
 			/*
@@ -830,53 +826,55 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 	/* SW Modified : Compaction of Cache Barrier Stripe */
 	for (i = disks; i--; ) {
 		for (k = i; k--; ) {
-			if (barrier_array[k] == barrier_array[i])
-				barrier_array[k] = 0;
+			if (raid_epoch_array[k] == raid_epoch_array[i])
+				raid_epoch_array[k] = 0;
 		}
 	}
 
 	/* SW Modified : The part of patent named "Cache Barrier Stripe" */
-	
 	for (i = disks; i--; ) {
-		if (barrier_array[i]) {
+		if (raid_epoch_array[i]) {
+			//printk(KERN_INFO "[CBSTRIPE] (%s) RAID Epoch : %p PID : %d\n"
+			//		,__func__,raid_epoch_array[i]
+			//		,raid_epoch_array[i]->pid);
 			for (k = disks; k--; ) {
 				struct bio *bi;
 				struct md_rdev *rdev;
-				if((bdisk_num_array[i] >> k) & 1)
+				if((bdisk_num_array[i] >> k) & 1) {
+					//set_bit(R5_Cbarrier,&sh->dev[k].flags);
+					//printk(KERN_INFO "[CBSTRIPE] (%s) Data : %d RAID Epoch : %p"
+					//		" PID : %d\n",__func__,k,raid_epoch_array[i]
+					//		,raid_epoch_array[i]->pid);
 					continue;
+				}
 				rdev = rcu_dereference(conf->disks[i].rdev);
 				bi = bio_alloc_mddev(GFP_NOIO, 0, mddev);
 				bi->bi_private = sh;
 				bi->bi_bdev = rdev->bdev;
 				bi->bi_rw = REQ_WRITE | REQ_SYNC | REQ_ORDERED | REQ_BARRIER;
+				// bi->bi_rw = WRITE_FLUSH;
 				bi->raid_dispatch = 1;
 				bi->raid_disk_num = i;
-				bi->shadow_pid = barrier_array[i];
 				bi->bi_end_io = raid5_end_dbarrier_request;
 				bi->raid_epoch = raid_epoch_array[i];
+				atomic_inc(&sh->count);
 				atomic_inc(&bi->raid_epoch->dbarrier_count);
 				atomic_inc(&bi->raid_epoch->e_count);
 				atomic_set(&bi->dispatch_check, 0);
 				atomic_set(&bi->dbarrier_check, 1);
 				atomic_inc(&rdev->nr_pending);
 				atomic_inc(&rdev->nr_pending);
-				//printk(KERN_INFO "[RAID EPOCH] (%s) [C_BARRIER] "
-				//			"PID : %d %llu : %d " 
-				//			"Epoch : %p"
-				//			"E_Count : %d\n",
-			        //	__func__, bi->raid_epoch->task->pid
-				//	, (unsigned long long)sh->sector, 
-        			//	k, bi->raid_epoch, atomic_read(&bi->raid_epoch->e_count));
+				//printk(KERN_INFO "[CBSTRIPE] (%s) Dummy : %d "
+				//			"RAID Epoch : %p PID : %d\n",__func__
+        			//	,k,bi->raid_epoch,bi->raid_epoch->pid);
 				bi->obi = NULL;
 				generic_make_request(bi);
 				rdev_dec_pending(rdev, conf->mddev);
 			}
 		}
 	}
-	
 	kfree(raid_epoch_array);
 	kfree(bdisk_num_array);
-	kfree(barrier_array);
 }
 
 static struct dma_async_tx_descriptor *
@@ -1402,9 +1400,9 @@ void raid_request_dispatched(struct request *req)
 		sh = bio->bi_private;
 		pdev = &sh->dev[sh->pd_idx];
 		
-		if (bio->bi_end_io == raid5_end_dbarrier_request && bio->raid_epoch
+		if (bio->bi_end_io == raid5_end_dbarrier_request && bio->bi_rw & REQ_BARRIER
 			&& !atomic_cmpxchg(&bio->dispatch_check, 0, 1)) {
-			/* Handle the case where cache barrier stripe is last arrived */
+			// Handle the case where cache barrier stripe is last arrived 
 			if(atomic_dec_and_test(&bio->raid_epoch->dbarrier_count)
 				&& atomic_read(&pdev->req.dispatch_check)) {
 				for (i = sh->disks; i--;) {
@@ -1413,32 +1411,10 @@ void raid_request_dispatched(struct request *req)
 					dev = &sh->dev[i];                    
        					wbi = dev->written;
 					if (wbi && wbi->raid_epoch == bio->raid_epoch 
+						&& test_and_clear_bit(R5_Cbarrier,&dev->flags)
 						&& atomic_read(&dev->req.dispatch_check)) { 
 						//printk(KERN_INFO "(%s) %lld : %d\n",
 						//	__func__,sh->sector,i);        
-        					struct raid_epoch *raid_epoch = wbi->raid_epoch;
-        					if (atomic_dec_and_test(&raid_epoch->e_count)){
-							printk(KERN_INFO "[DbarrierE] %p %lld : %d\n"
-									,raid_epoch,sh->sector,i);
-							printk(KERN_INFO "[DbarrierE] (%s) PID : %d "
-								"Free RAID EPOCH : %p"
-								"%lld : %d\n"
-								,__func__,raid_epoch->task->pid
-								,raid_epoch
-								,sh->sector,i);
-                					mempool_free(raid_epoch, 
-								mddev->raid_epoch_pool);
-        					}
-						else {
-							printk(KERN_INFO "[DbarrierE] (%s)"
-									" PID : %d Epoch %p "
-									"Epoch Count : %d\n"
-									,__func__
-									,raid_epoch->task->pid
-									,raid_epoch
-									,atomic_read(
-									&raid_epoch->e_count));
-						}
         					while (wbi && wbi->bi_sector <               
                 					dev->sector + STRIPE_SECTORS) {
 							__raid_request_dispatched(wbi,               
@@ -1452,28 +1428,6 @@ void raid_request_dispatched(struct request *req)
 					}                                            
 				}
 			}
-			/* Need to check the case in which same sector has double wbi */
-        		struct raid_epoch *raid_epoch = bio->raid_epoch;
-        		if (atomic_dec_and_test(&raid_epoch->e_count)){
-				printk(KERN_INFO "[Dbarrier1] %p %lld : %d\n"
-							,raid_epoch, sh->sector, bio->raid_disk_num);
-				printk(KERN_INFO "[Dbarrier1] (%s) PID : %d "
-					"Free RAID EPOCH : %p"
-					"%lld : %d\n"
-					,__func__,raid_epoch->task->pid
-					,raid_epoch
-					,sh->sector,bio->raid_disk_num);
-                		mempool_free(raid_epoch, mddev->raid_epoch_pool);
-        		}
-			else {
-				printk(KERN_INFO "[Dbarrier1] (%s)"
-						" PID : %d Epoch %p "
-						"Epoch Count : %d\n"
-						,__func__
-						,raid_epoch->task->pid
-						,raid_epoch
-						,atomic_read(&raid_epoch->e_count));
-			}
 			req_bio = bio->bi_next;
 			continue;
 		}
@@ -1482,12 +1436,11 @@ void raid_request_dispatched(struct request *req)
                 wbi = NULL;
                 wbi = dev->written;
 
-		if (bio->raid_epoch 
+		if (bio->bi_rw & REQ_ORDERED 
 			&& !atomic_cmpxchg(&bio->dispatch_check, 0, 1)) { 
 			/* Need to check the case in which same sector has double wbi */
-			struct raid_epoch *raid_epoch = bio->raid_epoch;
 			if (wbi && atomic_read(&pdev->req.dispatch_check)
-				&& !atomic_read(&bio->raid_epoch->dbarrier_count)) { 
+				&& !test_bit(R5_Cbarrier, &dev->flags)) { 
 				/* Case of Data Page */
 				//printk(KERN_INFO "(%s) %lld : %d\n",
 				//	__func__,sh->sector,bio->raid_disk_num);        
@@ -1502,26 +1455,6 @@ void raid_request_dispatched(struct request *req)
 					}
 					wbi = r5_next_bio(wbi, dev->sector);
 				}
-                		if (atomic_dec_and_test(&raid_epoch->e_count)) {
-					printk(KERN_INFO "[Data] %p %lld : %d\n",
-						raid_epoch,sh->sector,bio->raid_disk_num);
-					printk(KERN_INFO "[Data] (%s) PID : %d "
-						"Free RAID EPOCH : %p"
-						"%lld : %d\n"
-						,__func__,raid_epoch->task->pid
-						,raid_epoch
-						,sh->sector, bio->raid_disk_num);
-					mempool_free(raid_epoch, mddev->raid_epoch_pool);
-                        	}
-				else {
-					printk(KERN_INFO "[Data] (%s)"
-						" PID : %d Epoch %p "
-						"Epoch Count : %d\n"
-						,__func__
-						,raid_epoch->task->pid
-						,raid_epoch
-						,atomic_read(&raid_epoch->e_count));
-				}
 			}
 		}
 		if (bio->raid_disk_num == sh->pd_idx
@@ -1532,36 +1465,13 @@ void raid_request_dispatched(struct request *req)
 				dev = &sh->dev[i];
 				wbi = dev->written;
 				if (wbi && wbi->raid_epoch 
-					&& !atomic_read(&wbi->raid_epoch->dbarrier_count)
+					&& !test_bit(R5_Cbarrier, &dev->flags)
 					&& atomic_read(&dev->req.dispatch_check)) {
 					//printk(KERN_INFO "(%s) %lld : %d\n",
 					//	__func__,sh->sector,i);        
-        				struct raid_epoch *raid_epoch = wbi->raid_epoch;
-        				if (atomic_dec_and_test(&raid_epoch->e_count)) {
-						printk(KERN_INFO "[Parity] %p %lld : %d\n",
-							raid_epoch,sh->sector,i);
-						printk(KERN_INFO "[Parity] (%s) PID : %d "
-							"Free RAID EPOCH : %p"
-							"%lld : %d\n"
-							,__func__,raid_epoch->task->pid
-							,raid_epoch
-							,sh->sector,i);
-                				mempool_free(raid_epoch,mddev->raid_epoch_pool);
-					}
-					else {
-						printk(KERN_INFO "[Parity] (%s)"
-								" PID : %d Epoch %p "
-								"Epoch Count : %d\n"
-								,__func__
-								,raid_epoch->task->pid
-								,raid_epoch
-								,atomic_read(
-								&raid_epoch->e_count));
-					}
 					while (wbi && wbi->bi_sector <
          					dev->sector + STRIPE_SECTORS
          					&& atomic_read(&dev->req.dispatch_check)) {
-				
 						/* SW Modified : Track Dispatched Page 
 						using ops_run_biodrain routine */
         					__raid_request_dispatched(wbi, 
@@ -2283,78 +2193,51 @@ void raid5_end_dbarrier_request(struct bio *bi, int error)
 	
 	pdev = &sh->dev[sh->pd_idx];
 	if (!atomic_cmpxchg(&bi->dispatch_check,0,1)) {
-		/* Handle the case where cache barrier stripe is last arrived */
+		// Handle the case where cache barrier stripe is last arrived 
 		if(atomic_dec_and_test(&bi->raid_epoch->dbarrier_count)
 			&& atomic_read(&pdev->req.dispatch_check)) {
-        		for (i = sh->disks; i--;) {
-                		if (i == sh->pd_idx)
-                        		continue;
-                		dev = &sh->dev[i];
-                		wbi = dev->written;
-				if (wbi && wbi->raid_epoch == bi->raid_epoch
-					&& atomic_read(&dev->req.dispatch_check)) {
-					//printk(KERN_INFO "(%s) %lld : %d\n",__func__
-					//	,sh->sector,i);
-					struct raid_epoch *raid_epoch = wbi->raid_epoch;
-					if (atomic_dec_and_test(&raid_epoch->e_count)){
-        					printk(KERN_INFO "[DbarrierE] (%s) PID : %d "
-                					"Free RAID EPOCH : %p"
-                					"%lld : %d\n"
-                					,__func__,raid_epoch->task->pid
-                					,raid_epoch
-                					,sh->sector,i);
-        					mempool_free(raid_epoch,
-              		  					mddev->raid_epoch_pool);
-					}
-					else {
-					        printk(KERN_INFO "[DbarrierE] (%s)"
-                        				" PID : %d Epoch %p "
-                        				"Epoch Count : %d\n"
-                        				,__func__
-                        				,raid_epoch->task->pid
-                        				,raid_epoch
-                        				,atomic_read(
-                        				&raid_epoch->e_count));
-					}
-                			while (wbi && wbi->bi_sector <
-                        			dev->sector + STRIPE_SECTORS
-                        			&& atomic_read(&dev->req.dispatch_check)) {
-                        			__raid_request_dispatched(wbi,
-                                			wbi->bi_sector, dev->sector);
-                        			if (dispatch_bio_bh(wbi)) {
-                                			wbi = r5_next_bio(wbi, dev->sector);
-                                			continue;
-                        			}
-               		         		wbi = r5_next_bio(wbi, dev->sector);
-                			}
-				}
+        		for (i = sh->disks; i--;) {                                         
+                		if (i == sh->pd_idx)                                        
+                        		continue;                                           
+                		dev = &sh->dev[i];                                          
+               		 	wbi = dev->written;                                         
+                		if (wbi                                              
+                        		&& wbi->raid_epoch == bi->raid_epoch               
+                        		&& test_and_clear_bit(R5_Cbarrier,&dev->flags)      
+                        		&& atomic_read(&dev->req.dispatch_check)) {         
+                        		//printk(KERN_INFO "(%s) %lld : %d\n",              
+                        		//      __func__,sh->sector,i);                     
+                        		while (wbi && wbi->bi_sector <                      
+                                		dev->sector + STRIPE_SECTORS) {             
+                                		__raid_request_dispatched(wbi,              
+                                        		wbi->bi_sector, dev->sector);       
+                                		if (dispatch_bio_bh(wbi)) {                 
+                                        		wbi = r5_next_bio(wbi, dev->sector);
+                                        		continue;                           
+                                		}                                           
+                                		wbi = r5_next_bio(wbi, dev->sector);        
+                        		}                                                   
+                		}
         		}
-		}
-        	/* Need to check the case in which same sector has double wbi */
-        	struct raid_epoch *raid_epoch = bi->raid_epoch;
-        	if (atomic_dec_and_test(&raid_epoch->e_count)){
-			printk(KERN_INFO "[DbarrierE] (%s) PID : %d "
-        				"Free RAID EPOCH : %p"               
-        				"%lld : %d\n"                        
-        				,__func__,raid_epoch->task->pid      
-        				,raid_epoch                          
-			        	,sh->sector,i);                      
-        	        mempool_free(raid_epoch, mddev->raid_epoch_pool);
-        	}
-		else {
-			printk(KERN_INFO "[Dbarrier1] (%s)"
-					" PID : %d Epoch %p "
-					"Epoch Count : %d\n"
-					,__func__
-					,raid_epoch->task->pid
-					,raid_epoch
-					,atomic_read(&raid_epoch->e_count));
 		}
 	}
 
+	struct raid_epoch *raid_epoch = bi->raid_epoch;
+	if (raid_epoch && atomic_dec_and_test(&raid_epoch->e_count)) {
+                printk(KERN_INFO "(%s) PID : %d "        
+                                "Free RAID EPOCH : %p\n"        
+        		,__func__,raid_epoch->pid 
+        		,raid_epoch);   
+		mempool_free(bi->raid_epoch, mddev->raid_epoch_pool);
+	}
+
         rdev = conf->disks[bi->raid_disk_num].rdev;
-        bio_put(bi);
         rdev_dec_pending(rdev, conf->mddev);
+	
+	set_bit(STRIPE_HANDLE, &sh->state);
+	release_stripe(sh);
+
+	bio_put(bi);
         return;
 	
 }
@@ -2451,64 +2334,15 @@ void raid5_end_write_request(struct bio *bi, int error)
 	rdev_dec_pending(rdev, conf->mddev);
 
 	dev = &sh->dev[bi->raid_disk_num];
-	pdev = &sh->dev[sh->pd_idx];
-	wbi = NULL;
-	wbi = dev->written;
 
-	if (bi->raid_epoch
-	        && !atomic_cmpxchg(&bi->dispatch_check, 0, 1)) {
-	        // Need to check the case in which
-	        //        same sector has double wbi 
-	        struct raid_epoch *raid_epoch = bi->raid_epoch;
-		if (wbi && atomic_read(&pdev->req.dispatch_check) 
-			&& atomic_read(&bi->raid_epoch->dbarrier_count)) {
-			if (atomic_dec_and_test(&raid_epoch->e_count)) {
-                  		printk(KERN_INFO "[Data] (%s) PID : %d "                                          				"Free RAID EPOCH : %p\n"             
-        				,__func__,raid_epoch->task->pid 
-        				,raid_epoch);                        
-				mempool_free(bi->raid_epoch, mddev->raid_epoch_pool);
-			}
-			else {
-				printk(KERN_INFO "[Data] (%s)"
-					" PID : %d Epoch %p "
-					"Epoch Count : %d\n"
-					,__func__
-					,raid_epoch->task->pid
-					,raid_epoch
-					,atomic_read(&raid_epoch->e_count));
-			}
-       		}
+	struct raid_epoch *raid_epoch = bi->raid_epoch;
+	if (raid_epoch && atomic_dec_and_test(&raid_epoch->e_count)) {
+                printk(KERN_INFO "(%s) PID : %d "        
+                                "Free RAID EPOCH : %p\n"        
+        		,__func__,raid_epoch->pid 
+        		,raid_epoch);                        
+		mempool_free(bi->raid_epoch, mddev->raid_epoch_pool);
 	}
-
-	if (bi->raid_disk_num == sh->pd_idx
-		&& !atomic_cmpxchg(&bi->dispatch_check, 0, 1)) {
-        	for (i = sh->disks; i--;) {                                                
-                	if (i == sh->pd_idx)                                               
-                        	continue;                                                  
-                	dev = &sh->dev[i];                                                 
-                	wbi = dev->written;                                                
-                	if (wbi && wbi->raid_epoch                                         
-                        	&& !atomic_read(&wbi->raid_epoch->dbarrier_count)          
-                        	&& atomic_read(&dev->req.dispatch_check)) {                
-                        	struct raid_epoch *raid_epoch = wbi->raid_epoch;           
-                        	if (atomic_dec_and_test(&raid_epoch->e_count)) {      
-                        	        printk(KERN_INFO "[Parity] (%s) PID : %d "                                          				"Free RAID EPOCH : %p\n"             
-        						,__func__,raid_epoch->task->pid 
-        						,raid_epoch);                        
-					mempool_free(raid_epoch,mddev->raid_epoch_pool);   
-				}
-				else {
-					printk(KERN_INFO "[Parity] (%s)"
-							" PID : %d Epoch %p "
-							"Epoch Count : %d\n"
-							,__func__
-							,raid_epoch->task->pid
-							,raid_epoch
-							,atomic_read(&raid_epoch->e_count));
-				}
-                        }                                                          
-                }                                                                  
-        }                                                                          
 
 	if (!test_and_clear_bit(R5_DOUBLE_LOCKED, &sh->dev[bi->raid_disk_num].flags)) {
 		clear_bit(R5_LOCKED, &sh->dev[bi->raid_disk_num].flags);
@@ -3019,12 +2853,7 @@ static int add_stripe_bio(struct stripe_head *sh, struct bio *bi, int dd_idx, in
 		if (*bip == NULL)
 			firstwrite = 1;
 		/* SW Modified */
-		if (*bip && (current->pid != (*bip)->shadow_pid
-				|| ((*bip)->bi_rw & REQ_ORDERED && bi->bi_rw & REQ_ORDERED))) { 
-			printk(KERN_ERR "[RAID EPOCH] (%s) Current PID : %d Existing PID :%d"
-					"Current OP : %llx Existing OP : %llx"
-					,__func__, current->pid, (*bip)->shadow_pid,
-					bi->bi_rw, (*bip)->bi_rw);
+		else {
 			goto overlap;
 		}
 	} else
@@ -3042,7 +2871,6 @@ static int add_stripe_bio(struct stripe_head *sh, struct bio *bi, int dd_idx, in
 	if (*bip)
 		bi->bi_next = *bip;
 	*bip = bi;
-	(*bip)->shadow_pid = current->pid;
 	raid5_inc_bi_active_stripes(bi);
 
 	if (forwrite) {
@@ -4910,7 +4738,6 @@ static void raid5_barrier_request (struct mddev *mddev, struct r5conf *conf, str
 		bi->bi_rw = REQ_WRITE | REQ_SYNC | REQ_ORDERED | REQ_BARRIER;
 		bi->raid_dispatch = 0;
 		bi->raid_disk_num = i;
-		bi->shadow_pid = current->pid;
 		bi->raid_epoch = NULL;
 		atomic_set(&bi->dispatch_check, 0);
 		atomic_set(&bi->dbarrier_check, 2);
@@ -5064,12 +4891,11 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 			/* SW Modified */
 			bi->raid_epoch = NULL;
 			if (bi->bi_rw & REQ_ORDERED) {
-				struct raid_epoch *raid_epoch = NULL;
+				struct raid_epoch *raid_epoch = current->__raid_epoch;
 				unsigned long flags;
 
 				// if there is no raid epoch for this thread, create new one 
-				if (!current->__raid_epoch) {
-					// raid_epoch = kzalloc(sizeof(raid_epoch), GFP_NOIO);
+				if (!raid_epoch) {
 					raid_epoch = mempool_alloc(mddev->raid_epoch_pool
 									, GFP_NOIO);
 
@@ -5079,9 +4905,11 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 								,__func__);
 						return;
 					}
+					printk(KERN_INFO "[SWDEBUG] (%s) Epoch : %p Size : %d\n"
+						,__func__,raid_epoch,sizeof(struct raid_epoch));
 					memset(raid_epoch, 0, sizeof(struct raid_epoch));
 					
-					raid_epoch->task = current; 
+					raid_epoch->pid = current->pid; 
 					raid_epoch->mddev = mddev;
 					
 					raid_epoch->barrier = 0;
@@ -5095,19 +4923,20 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 					
 					current->__raid_epoch = raid_epoch;
 		
-					printk(KERN_INFO "[RAID EPOCH] (%s) PID : %d "
-								"Alloc RAID EPOCH! : %p"
-								"Epoch Count : %d\n"
-								,__func__
-								,current->pid
-								,raid_epoch
-								,atomic_read(&raid_epoch->e_count));
+					//printk(KERN_INFO "[RAID EPOCH] (%s) PID : %d "
+					//			"Alloc RAID EPOCH! : %p"
+					//			"Epoch Count : %d\n"
+					//			,__func__
+					//			,current->pid
+					//			,raid_epoch
+					//			,atomic_read(&raid_epoch->e_count));
 				}
 				
-				bi->raid_epoch = current->__raid_epoch;
-				spin_lock_irqsave(&bi->raid_epoch->raid_epoch_lock, flags);
+				bi->raid_epoch = raid_epoch;
+				spin_lock(&bi->raid_epoch->raid_epoch_lock);
 				bi->raid_epoch->pending++;
 				atomic_inc(&bi->raid_epoch->e_count);
+				spin_unlock(&bi->raid_epoch->raid_epoch_lock);
 				
 				//printk(KERN_INFO "[RAID EPOCH] (%s) PID : %d %llu : %d "
 				//			"Epoch : %p "
@@ -5118,10 +4947,11 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 				//			,atomic_read(&bi->raid_epoch->e_count));
 				
 				if (bi->bi_rw & REQ_BARRIER) {
-					raid_epoch = current->__raid_epoch;
-					raid_epoch->barrier = 1;
+					spin_lock(&bi->raid_epoch->raid_epoch_lock);
+					bi->raid_epoch->barrier = 1;
+					spin_unlock(&bi->raid_epoch->raid_epoch_lock);
 					current->__raid_epoch = NULL;
-					atomic_dec(&raid_epoch->e_count);
+					atomic_dec(&bi->raid_epoch->e_count);
 					//printk(KERN_INFO "[RAID EPOCH] (%s) PID : %d "
 					//			"Finish RAID EPOCH! : %p"
 					//			"Epoch Count : %d\n"
@@ -5130,7 +4960,6 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 					//			,raid_epoch
 					//			,atomic_read(&raid_epoch->e_count));
 				}
-				spin_unlock_irqrestore(&bi->raid_epoch->raid_epoch_lock, flags);
 			}
 			set_bit(STRIPE_HANDLE, &sh->state);
 			clear_bit(STRIPE_DELAYED, &sh->state);

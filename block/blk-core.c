@@ -1553,12 +1553,10 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 	/*
 	if (bio->bi_rw & REQ_ORDERED) {
 
-		if (in_interrupt()) {
-			printk(KERN_INFO "[SWDEBUG] (%s) In Interrupt!\n",__func__);
-		}
-	
-		struct task_struct *task = bio->raid_epoch ? 
-						bio->raid_epoch->task : current;
+		//struct task_struct *task = bio->raid_epoch ? 
+		//				bio->raid_epoch->task : current;
+			
+		struct task_struct *task = current;
 		
 		if (!task) {
 			printk(KERN_INFO "[SWDEBUG] (%s) Epoch %p Pending : %d\n"
