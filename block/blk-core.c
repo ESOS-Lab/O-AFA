@@ -1550,25 +1550,12 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 
 	bio->storage_epoch = NULL;
 	/* UFS */
-	/*
 	if (bio->bi_rw & REQ_ORDERED) {
 
-		//struct task_struct *task = bio->raid_epoch ? 
-		//				bio->raid_epoch->task : current;
-			
-		struct task_struct *task = current;
-		
-		if (!task) {
-			printk(KERN_INFO "[SWDEBUG] (%s) Epoch %p Pending : %d\n"
-					,__func__,bio->raid_epoch,bio->raid_epoch->pending);
-		}
-		
 		// Access Storage List 
-		spin_lock(&task->slist_lock);
-		list_for_each(ptr,&task->storage_list) {
-			if (ptr == 0xdead000000100100)
-				panic("Raid Epoch : %p Task : %p PID : %d Comm : %s\n"
-					,bio->raid_epoch,task,task->pid,task->comm);
+		storage_epoch = NULL;
+		spin_lock(&current->slist_lock);
+		list_for_each(ptr,&current->storage_list) {
 			storage_epoch = list_entry(ptr, struct storage_epoch, list);
 			if (storage_epoch->q == q) { 
 				break;
@@ -1576,14 +1563,14 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 			else
 				storage_epoch = NULL;
 		}
-		spin_unlock(&task->slist_lock);
+		spin_unlock(&current->slist_lock);
 		
 		if (!storage_epoch) {
 			storage_epoch = mempool_alloc(q->epoch_pool, GFP_NOFS);
 
 			memset(storage_epoch, 0 ,sizeof(struct storage_epoch));
 
-			storage_epoch->task = task;
+			storage_epoch->pid = current->pid;
 			storage_epoch->q = q;
 		
 			storage_epoch->pending = 0;                                     
@@ -1595,30 +1582,33 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 			atomic_set(&storage_epoch->s_e_count, 0);                      
 			INIT_LIST_HEAD(&storage_epoch->list);     
                                                                 
-			spin_lock(&task->slist_lock);
-			list_add_tail(&storage_epoch->list, &task->storage_list);
-			list_for_each(ptr,&task->storage_list) {
-				if (ptr == 0xdead000000100100)
-					panic("Raid Epoch : %p Task : %p PID : %d Comm : %s\n"
-						,bio->raid_epoch,task,task->pid,task->comm);
-				storage_epoch = list_entry(ptr, struct storage_epoch, list);
-			}
-			spin_unlock(&task->slist_lock);
+			spin_lock(&current->slist_lock);
+			list_add_tail(&storage_epoch->list, &current->storage_list);
+			spin_unlock(&current->slist_lock);
 			
 			atomic_inc(&storage_epoch->s_e_count); 
-			
-			// if (bio->raid_epoch) {
-			//	printk(KERN_INFO "[STORAGE EPOCH] (%s) PID : %d Device : %d "
-			//				"Epoch Count : %d "
-			//				"Start Storage Epoch!\n"
-			//			,__func__, bio->raid_epoch->task->pid
-			//			,bio->raid_disk_num
-			//			,atomic_read(&storage_epoch->s_e_count));
-			//}              
+			//if (bio->raid_dispatch)
+			//	printk(KERN_INFO "[STORAGE EPOCH] (%s) PID : %d Device : %p "
+			//			"Epoch : %p "
+			//			"Epoch Count : %d "
+			//			"Start Storage Epoch!\n"
+			//		,__func__, current->pid
+			//		,storage_epoch->q
+			//		,storage_epoch
+			//		,atomic_read(&storage_epoch->s_e_count));
 		}
 
 		bio->storage_epoch = storage_epoch;
 		atomic_inc(&bio->storage_epoch->s_e_count);
+
+		//if (bio->raid_dispatch)
+		//	printk(KERN_INFO "(%s) bio : %p Assigned Queue : %p Requested Queue : %p\n"
+		//			,__func__, bio, bio->storage_epoch->q, q);
+
+		if (storage_epoch->q != q) {
+			panic("Strage Epoch Queue is not matched with Requested Queue!");
+		}
+
 		//if (bio->raid_epoch) {
 		//	printk(KERN_INFO "[STORAGE EPOCH] (%s) PID : %d Device : %d "
 		//				"Epoch Count : %d\n"
@@ -1626,24 +1616,18 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 		//				,bio->raid_disk_num, 
 		//				atomic_read(&bio->storage_epoch->s_e_count));
 		//}
-		// spin_lock_irqsave(&storage_epoch->s_e_lock, flags);
+		spin_lock_irqsave(&storage_epoch->s_e_lock, flags);
 		bio->storage_epoch->pending++;
-		// spin_unlock_irqrestore(&storage_epoch->s_e_lock, flags);
+		spin_unlock_irqrestore(&storage_epoch->s_e_lock, flags);
 		
 		if (bio->bi_rw & REQ_BARRIER) {
-			// spin_lock_irqsave(&storage_epoch->s_e_lock, flags);
+			spin_lock_irqsave(&storage_epoch->s_e_lock, flags);
 			bio->storage_epoch->barrier = 1;
-			// spin_unlock_irqrestore(&storage_epoch->s_e_lock, flags);
+			spin_unlock_irqrestore(&storage_epoch->s_e_lock, flags);
 			atomic_dec(&storage_epoch->s_e_count);
-			spin_lock(&task->slist_lock);
+			spin_lock(&current->slist_lock);
 			list_del_init(&storage_epoch->list);
-			list_for_each(ptr,&task->storage_list) {
-				if (ptr == 0xdead000000100100)
-					panic("Raid Epoch : %p Task : %p PID : %d Comm : %s\n"
-						,bio->raid_epoch,task,task->pid,task->comm);
-				storage_epoch = list_entry(ptr, struct storage_epoch, list);
-			}
-			spin_unlock(&task->slist_lock);
+			spin_unlock(&current->slist_lock);
 
 			//spin_unlock(&task->list_lock);
 			//if (bio->raid_epoch) {
@@ -1656,7 +1640,6 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 			//} 
 		}
 	}
-	*/
 	/*
 	 * Check if we can merge with the plugged list before grabbing
 	 * any locks.
@@ -3256,14 +3239,16 @@ void blk_issue_barrier_plug(struct blk_plug *plug)
 	spin_lock(&current->slist_lock);
 	list_for_each_safe(ptr, ptrn, &current->storage_list) {
 		storage_epoch = list_entry(ptr, struct storage_epoch, list);
-		if (storage_epoch->pending) {
+		spin_lock_irqsave(&storage_epoch->s_e_lock, flags);
+		if (storage_epoch->pending && !storage_epoch->barrier) {
 			current->barrier_fail = 0;
 			storage_epoch->barrier = 1;
 			atomic_dec(&storage_epoch->s_e_count);
 			list_del(&storage_epoch->list);
 		}
-		else
+		else if (!storage_epoch->pending && !storage_epoch->barrier)
 			current->barrier_fail = 1;
+		spin_unlock_irqrestore(&storage_epoch->s_e_lock, flags);
 	}
 	spin_unlock(&current->slist_lock);
 	
@@ -3291,10 +3276,11 @@ void blk_request_dispatched(struct request *req)
 			if (bio->storage_epoch) {
 				struct storage_epoch *storage_epoch;
 				storage_epoch = bio->storage_epoch;
+				bio->storage_epoch = NULL;
 				if (atomic_dec_and_test(&storage_epoch->s_e_count)) {
 					//printk(KERN_INFO "[SWDEBUG] (%s)"
 					//	"PID : %d ClearEpoch : %p\n"
-					//	,__func__,bio->storage_epoch->task->pid
+					//	,__func__,bio->storage_epoch->pid
 					//	,bio->storage_epoch);
 					mempool_free(storage_epoch, storage_epoch->q->epoch_pool);
 				}

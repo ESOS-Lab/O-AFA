@@ -374,26 +374,22 @@ void elv_dispatch_sort(struct request_queue *q, struct request *rq)
 			struct bio *bio = req_bio;
 			if (bio->storage_epoch) {
 				struct storage_epoch *storage_epoch = bio->storage_epoch;
-				// spin_lock_irqsave(&storage_epoch->s_e_lock,flags);
+				spin_lock_irqsave(&storage_epoch->s_e_lock,flags);
 				if (storage_epoch->q != q) {
-					printk(KERN_INFO "Storage Epoch : %p"
-							" Task : %p Queue : %p Barrier : %d"
-							" Pending : %d Count : %d\n",
-							storage_epoch,
-							storage_epoch->task, storage_epoch->q,
-							storage_epoch->barrier,
-							storage_epoch->pending,
-							atomic_read(&storage_epoch->s_e_count));
-					panic ("[STORAGE SCHEDULER] (%s) "
-						"Request Queue is Not Matched!, Queue : %p\n"
-						,__func__, q);
+					printk(KERN_INFO "BIO :%p "
+						"Epoch : %p Storage Queue : %p Current Queue : %p\n"
+						,bio, bio->storage_epoch, storage_epoch->q, q);
+					panic ("[STORAGE EPOCH] (%s) "
+						"Request Queue is Not Matched!"
+						"Queue : %p Epoch Queue : %p\n"
+						,__func__, q, storage_epoch->q);
 					break;
 				}
 				if (storage_epoch->pending == 1 && storage_epoch->barrier) {
 					rq->cmd_bflags |= REQ_BARRIER;
 				}
 				storage_epoch->pending--;
-				// spin_unlock_irqrestore(&storage_epoch->s_e_lock,flags);
+				spin_unlock_irqrestore(&storage_epoch->s_e_lock,flags);
 
 			}
 			req_bio = bio->bi_next;

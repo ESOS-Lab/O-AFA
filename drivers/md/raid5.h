@@ -206,6 +206,7 @@ struct stripe_head {
 	short			ddf_layout;/* use DDF ordering to calculate Q */
 	unsigned long		state;		/* state flags */
 	atomic_t		count;	      /* nr of active thread/requests */
+	atomic_t		dbarrier_count; /* SW Modified */
 	int			bm_seq;	/* sequence number for bitmap flushes */
 	int			disks;		/* disks in stripe */
 	enum check_states	check_state;
@@ -324,6 +325,7 @@ enum {
 	STRIPE_OPS_REQ_PENDING,
 	STRIPE_ON_UNPLUG_LIST,
 	STRIPE_DISCARD,
+	STRIPE_CACHE_BARRIER,
 };
 
 /*
@@ -535,4 +537,5 @@ extern void md_raid5_kick_device(struct r5conf *conf);
 extern int raid5_set_cache_size(struct mddev *mddev, int size);
 extern void raid5_end_write_request(struct bio *bi, int error);
 extern void raid5_end_dbarrier_request(struct bio *bi, int error);
+extern void raid5_barrier_request (struct work_struct *ws);
 #endif

@@ -994,8 +994,10 @@ void scsi_io_completion(struct scsi_cmnd *cmd, unsigned int good_bytes)
 				scsi_print_sense("", cmd);
 			scsi_print_command(cmd);
 		}
-		if (blk_end_request_err(req, error))
+		if (blk_end_request_err(req, error)) {
+			dump_stack();
 			scsi_requeue_command(q, cmd);
+		}
 		else
 			scsi_next_command(cmd);
 		break;

@@ -67,7 +67,6 @@ struct blk_plug;
 /* SW Modified */
 struct storage_epoch {
 
-	struct task_struct *task;
 	struct request_queue *q;
 	pid_t	pid;
 

@@ -74,6 +74,7 @@ static void md_print_devices(void);
 static DECLARE_WAIT_QUEUE_HEAD(resync_wait);
 static struct workqueue_struct *md_wq;
 static struct workqueue_struct *md_misc_wq;
+static struct workqueue_struct *md_dbarrier_wq;
 
 struct kmem_cache *raid_epoch_cachep;
 
@@ -433,6 +434,73 @@ static void submit_flushes(struct work_struct *ws)
 		queue_work(md_wq, &mddev->flush_work);
 }
 
+static void md_end_submit_dbarrier(struct work_struct *ws)               
+{                                                                           
+        struct mddev *mddev = container_of(ws, struct mddev, dbarrier_work);
+        struct bio *bio = mddev->dbarrier_bio;                              
+                                                                            
+        bio_endio(bio, 0);                                                  
+                                                                            
+        mddev->dbarrier_bio = NULL;                                         
+               
+        wake_up(&mddev->dbarrier_wait);                                     
+}                                                                           
+
+static void md_end_dbarrier(struct bio *bi, int error);
+
+static void submit_dbarrier (struct work_struct *ws)
+{       
+        struct mddev *mddev = container_of(ws, struct mddev, dbarrier_work);
+        struct md_rdev *rdev;
+                            
+        INIT_WORK(&mddev->dbarrier_work, md_end_submit_dbarrier);
+        atomic_set(&mddev->dbarrier_pending, 1);
+        rcu_read_lock();
+        rdev_for_each_rcu(rdev,mddev)
+                if (rdev->raid_disk >=0 &&
+                        !test_bit(Faulty, &rdev->flags)) {
+                        struct bio *bi;
+                        atomic_inc(&rdev->nr_pending);
+                        atomic_inc(&rdev->nr_pending);
+                        rcu_read_unlock();
+                        bi = bio_alloc_mddev(GFP_NOIO, 0, mddev);
+			printk(KERN_INFO "Alloc BI : %p\n",bi);
+                        bi->bi_end_io = md_end_dbarrier;
+                        bi->bi_private = rdev;
+                        bi->bi_bdev = rdev->bdev;
+                        bi->raid_dispatch = 0;
+                        atomic_inc(&mddev->dbarrier_pending);
+                        submit_bio(WRITE_BARRIER, bi);
+                        rcu_read_lock();
+                        rdev_dec_pending(rdev, mddev);
+                }
+        rcu_read_unlock();
+
+        if (atomic_dec_and_test(&mddev->dbarrier_pending)) {
+		queue_work(md_dbarrier_wq, &mddev->dbarrier_work);
+	}
+
+        return;
+}
+
+static void md_end_dbarrier(struct bio *bi, int error)                         
+{                                                                                    
+        struct md_rdev *rdev = bi->bi_private;                                       
+        struct mddev *mddev = rdev->mddev;                                           
+                                                                                     
+        rdev_dec_pending(rdev, mddev);                                               
+
+        /* Call bio_end_io to finish wait when cache barrier stripe is all arrived */
+        if (atomic_dec_and_test(&mddev->dbarrier_pending)) {                         
+                queue_work(md_dbarrier_wq, &mddev->dbarrier_work);                   
+        }
+	if (atomic_read(&bi->bi_cnt) == 1)                                                  
+		printk(KERN_INFO "Free BI : %p\n",bi);
+        bio_put(bi);                                                                 
+        return;                                                                      
+}                                                                                    
+
+
 static void md_submit_flush_data(struct work_struct *ws)
 {
 	struct mddev *mddev = container_of(ws, struct mddev, flush_work);
@@ -463,6 +531,20 @@ void md_flush_request(struct mddev *mddev, struct bio *bio)
 	queue_work(md_wq, &mddev->flush_work);
 }
 EXPORT_SYMBOL(md_flush_request);
+
+void md_dbarrier_request(struct mddev *mddev, struct bio *bio)
+{
+	spin_lock_irq(&mddev->dbarrier_lock);
+	wait_event_lock_irq(mddev->dbarrier_wait,
+			     !mddev->dbarrier_bio,
+			     mddev->dbarrier_lock);
+	mddev->dbarrier_bio = bio;
+	spin_unlock_irq(&mddev->dbarrier_lock);
+	
+	INIT_WORK(&mddev->dbarrier_work, submit_dbarrier);
+	queue_work(md_dbarrier_wq, &mddev->dbarrier_work);
+}
+EXPORT_SYMBOL(md_dbarrier_request);
 
 void md_unplug(struct blk_plug_cb *cb, bool from_schedule)
 {
@@ -521,9 +603,12 @@ void mddev_init(struct mddev *mddev)
 	atomic_set(&mddev->openers, 0);
 	atomic_set(&mddev->active_io, 0);
 	spin_lock_init(&mddev->write_lock);
+	spin_lock_init(&mddev->dbarrier_lock);
 	atomic_set(&mddev->flush_pending, 0);
+	atomic_set(&mddev->dbarrier_pending, 0);
 	init_waitqueue_head(&mddev->sb_wait);
 	init_waitqueue_head(&mddev->recovery_wait);
+	init_waitqueue_head(&mddev->dbarrier_wait);
 	mddev->reshape_position = MaxSector;
 	mddev->reshape_backwards = 0;
 	mddev->resync_min = 0;
@@ -8551,6 +8636,10 @@ static int __init md_init(void)
 
 	md_wq = alloc_workqueue("md", WQ_MEM_RECLAIM, 0);
 	if (!md_wq)
+		goto err_wq;
+
+	md_dbarrier_wq = alloc_workqueue("md_dbarrier", WQ_MEM_RECLAIM, 0);
+	if (!md_dbarrier_wq)
 		goto err_wq;
 
 	md_misc_wq = alloc_workqueue("md_misc", 0, 0);

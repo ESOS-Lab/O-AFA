@@ -259,11 +259,10 @@ int ext4_fbarrier_file(struct file *file, loff_t start, loff_t end, int datasync
 	if (!datasync && journal->j_flags & JBD2_BARRIER &&
 		!jbd2_trans_will_send_data_barrier(journal, commit_tid))
 		needs_barrier = true;
-	
 	if (needs_barrier) {
 		//printk(KERN_ERR "[FileSystem] (%s) PID : %d Barrier Fail!\n"
 		//			,__func__,current->pid);
-		//blkdev_issue_barrier(inode->i_sb->s_bdev, GFP_KERNEL, NULL);
+		blkdev_issue_barrier(inode->i_sb->s_bdev, GFP_KERNEL, NULL);
 		current->barrier_fail = 0;
 		goto out;
 	}

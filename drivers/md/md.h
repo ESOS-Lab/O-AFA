@@ -375,7 +375,9 @@ struct mddev {
 	struct work_struct del_work;	/* used for delayed sysfs removal */
 
 	spinlock_t			write_lock;
+	spinlock_t			dbarrier_lock;
 	wait_queue_head_t		sb_wait;	/* for waiting on superblock updates */
+	wait_queue_head_t		dbarrier_wait;
 	atomic_t			pending_writes;	/* number of active superblock writes */
 
 	unsigned int			safemode;	/* if set, update "clean" superblock
@@ -421,9 +423,12 @@ struct mddev {
 	 * the rest of the request (without the REQ_FLUSH flag).
 	 */
 	struct bio *flush_bio;
+	struct bio *dbarrier_bio;
 	atomic_t flush_pending;
+	atomic_t dbarrier_pending;
 	struct work_struct flush_work;
 	struct work_struct event_work;	/* used by dm to report failure event */
+	struct work_struct dbarrier_work;
 	void (*sync_super)(struct mddev *mddev, struct md_rdev *rdev);
 
 	/* SW Modified */
@@ -600,6 +605,7 @@ extern void md_finish_reshape(struct mddev *mddev);
 
 extern int mddev_congested(struct mddev *mddev, int bits);
 extern void md_flush_request(struct mddev *mddev, struct bio *bio);
+extern void md_dbarrier_request(struct mddev *mddev, struct bio *bio);
 extern void md_super_write(struct mddev *mddev, struct md_rdev *rdev,
 			   sector_t sector, int size, struct page *page);
 extern void md_super_wait(struct mddev *mddev);
