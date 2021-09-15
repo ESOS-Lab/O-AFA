@@ -2616,8 +2616,6 @@ retry:
 				raid_epoch->barrier = 1;
 				current->__raid_epoch = NULL;
 				atomic_dec(&raid_epoch->e_count);
-				printk(KERN_INFO "Finish RAID EPOCH! Task : %p PID :%d\n"
-					,current,current->pid);
 			}
 			spin_unlock_irqrestore(&raid_epoch->raid_epoch_lock, flags);
 		}

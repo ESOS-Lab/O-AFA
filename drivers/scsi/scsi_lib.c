@@ -580,8 +580,9 @@ static struct scsi_cmnd *scsi_end_request(struct scsi_cmnd *cmd, int error,
 	 */
 	if (blk_end_request(req, error, bytes)) {
 		/* kill remainder if no retrys */
-		if (error && scsi_noretry_cmd(cmd))
+		if (error && scsi_noretry_cmd(cmd)) {
 			blk_end_request_all(req, error);
+		}
 		else {
 			if (requeue) {
 				/*
@@ -1633,6 +1634,17 @@ static void scsi_request_fn(struct request_queue *q)
 		 */
 		cmd->request->ref_count++;
 		rtn = scsi_dispatch_cmd(cmd);
+
+		/*
+		req_bio = cmd->request->bio;
+		while(req_bio) {
+			struct bio *bio = req_bio;
+			if (!bio->bi_phys_segments) {
+				printk(KERN_INFO "(%s) cmd : %p\n",__func__,cmd);	
+			}
+			req_bio = bio->bi_next;
+		}
+		*/
 		
 		spin_lock_irq(q->queue_lock);
 		if (rtn) { 

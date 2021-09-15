@@ -464,7 +464,6 @@ static void submit_dbarrier (struct work_struct *ws)
                         atomic_inc(&rdev->nr_pending);
                         rcu_read_unlock();
                         bi = bio_alloc_mddev(GFP_NOIO, 0, mddev);
-			printk(KERN_INFO "Alloc BI : %p\n",bi);
                         bi->bi_end_io = md_end_dbarrier;
                         bi->bi_private = rdev;
                         bi->bi_bdev = rdev->bdev;
@@ -494,8 +493,6 @@ static void md_end_dbarrier(struct bio *bi, int error)
         if (atomic_dec_and_test(&mddev->dbarrier_pending)) {                         
                 queue_work(md_dbarrier_wq, &mddev->dbarrier_work);                   
         }
-	if (atomic_read(&bi->bi_cnt) == 1)                                                  
-		printk(KERN_INFO "Free BI : %p\n",bi);
         bio_put(bi);                                                                 
         return;                                                                      
 }                                                                                    

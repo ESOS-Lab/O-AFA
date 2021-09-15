@@ -581,7 +581,7 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 							count++;
 					}	
 					if (raid_epoch->pending == count) {
-						set_bit(STRIPE_CACHE_BARRIER, &sh->state);
+						//set_bit(STRIPE_CACHE_BARRIER, &sh->state);
 						bdisk_num |= 1 << i;
 					}
 				}
@@ -607,7 +607,8 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 				rw |= REQ_DISCARD;
 			if (test_and_clear_bit(R5_OrderedIO, &sh->dev[i].flags))
 				rw |= REQ_ORDERED;
-			if (bdisk_num >> i != 0) {
+			if (bdisk_num >> i != 0 
+				|| (i == sh->pd_idx && test_bit(STRIPE_CACHE_BARRIER, &sh->state))) {
 				rw |= REQ_BARRIER;
 			}
 		} else if (test_and_clear_bit(R5_Wantread, &sh->dev[i].flags))
@@ -808,7 +809,7 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 	/* SW Modified : The part of patent named "Cache Barrier Stripe" */
 	if (test_bit(STRIPE_CACHE_BARRIER, &sh->state)) {
 		for (i = disks; i--; ) {
-			if (bdisk_num >> i != 0)
+			if (bdisk_num >> i != 0 || i == sh->pd_idx)
 				continue;
 			struct bio *bi;
 			struct md_rdev *rdev;
@@ -1397,7 +1398,8 @@ void raid_request_dispatched(struct request *req)
 		if (bio->bi_rw & REQ_ORDERED 
 			&& !atomic_cmpxchg(&bio->dispatch_check, 0, 1)) { 
 			/* Need to check the case in which same sector has double wbi */
-			if (wbi && atomic_read(&pdev->req.dispatch_check)) { 
+			if (wbi && atomic_read(&pdev->req.dispatch_check)
+				&& !test_bit(STRIPE_CACHE_BARRIER, &sh->state)) { 
 				/* Case of Data Page */
 				//printk(KERN_INFO "(%s) %lld : %d\n",
 				//	__func__,sh->sector,bio->raid_disk_num);        
@@ -1422,7 +1424,8 @@ void raid_request_dispatched(struct request *req)
 				dev = &sh->dev[i];
 				wbi = dev->written;
 				if (wbi && wbi->raid_epoch 
-					&& atomic_read(&dev->req.dispatch_check)) {
+					&& atomic_read(&dev->req.dispatch_check)
+					&& !test_bit(STRIPE_CACHE_BARRIER, &sh->state)) {
 					//printk(KERN_INFO "(%s) %lld : %d\n",
 					//	__func__,sh->sector,i);        
 					while (wbi && wbi->bi_sector <
