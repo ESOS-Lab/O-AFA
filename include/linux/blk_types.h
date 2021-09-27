@@ -86,9 +86,7 @@ struct bio {
 
 	atomic_t		bi_cnt;		/* pin count */
 	int			raid_disk_num;  /* SW Modified */
-	unsigned int		raid_dispatch; /* SW Modified */
 	atomic_t		dispatch_check; /* SW Modified */
-	atomic_t		dbarrier_check; /* SW Modified */
 	struct bio		*obi;		/* SW Modified */
 
 	struct bio_vec		*bi_io_vec;	/* the actual vec list */

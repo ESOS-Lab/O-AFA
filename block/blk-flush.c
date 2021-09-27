@@ -511,7 +511,6 @@ int blkdev_issue_barrier(struct block_device *bdev, gfp_t gfp_mask,
 	bio->bi_bdev = bdev;
 	bio->bi_private = &wait; /* SW Modified */
 	atomic_set(&bio->dispatch_check, 0);
-	atomic_set(&bio->dbarrier_check, 1);
 
 	bio_get(bio);
 	submit_bio(WRITE_BARRIER, bio);

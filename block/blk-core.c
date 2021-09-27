@@ -3233,8 +3233,6 @@ void blk_issue_barrier_plug(struct blk_plug *plug)
 	struct list_head *ptr, *ptrn;
 	
 	current->barrier_fail = 1;
-	printk(KERN_INFO "[SWDEBUG] (%s) PID : %d Finish All Epoch!\n"
-				,__func__,current->pid);
 	
 	spin_lock(&current->slist_lock);
 	list_for_each_safe(ptr, ptrn, &current->storage_list) {
@@ -3267,7 +3265,7 @@ void blk_request_dispatched(struct request *req)
 		return;
 
 	req_bio = req->bio;
-
+		
 	while (req_bio) {
 		int i;
 		struct bio *bio = req_bio;

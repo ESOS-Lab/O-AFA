@@ -467,7 +467,6 @@ static void submit_dbarrier (struct work_struct *ws)
                         bi->bi_end_io = md_end_dbarrier;
                         bi->bi_private = rdev;
                         bi->bi_bdev = rdev->bdev;
-                        bi->raid_dispatch = 0;
                         atomic_inc(&mddev->dbarrier_pending);
                         submit_bio(WRITE_BARRIER, bi);
                         rcu_read_lock();
@@ -517,6 +516,32 @@ static void md_submit_flush_data(struct work_struct *ws)
 
 void md_flush_request(struct mddev *mddev, struct bio *bio)
 {
+	/*
+        struct md_rdev *rdev;
+
+        atomic_set(&bio->dispatch_check, 1);
+        rcu_read_lock();
+        rdev_for_each_rcu(rdev, mddev)
+                if (rdev->raid_disk >= 0 &&
+                    !test_bit(Faulty, &rdev->flags)) {
+                        struct bio *bi;
+                        atomic_inc(&rdev->nr_pending);
+                        atomic_inc(&rdev->nr_pending);
+                        rcu_read_unlock();
+                        bi = bio_alloc_mddev(GFP_NOIO, 0, mddev);
+                        bi->bi_end_io = md_end_flush;
+                        bi->bi_private = rdev;
+                        bi->bi_bdev = rdev->bdev;
+			bi->obi = bio;
+                        atomic_inc(&mddev->flush_pending);
+                        submit_bio(WRITE_FLUSH, bi);
+                        rcu_read_lock();
+                        rdev_dec_pending(rdev, mddev);
+                }
+        rcu_read_unlock();
+        if (atomic_dec_and_test(&bio->dispatch_check))
+		bio_endio(bio, 0);
+	*/
 	spin_lock_irq(&mddev->write_lock);
 	wait_event_lock_irq(mddev->sb_wait,
 			    !mddev->flush_bio,

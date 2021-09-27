@@ -1621,6 +1621,7 @@ static void scsi_request_fn(struct request_queue *q)
 		 * XXX(hch): This is rather suboptimal, scsi_dispatch_cmd will
 		 *		take the lock again.
 		 */
+		//cmd->request->ref_count++;
 		spin_unlock_irq(shost->host_lock);
 
 		/*
@@ -1632,20 +1633,8 @@ static void scsi_request_fn(struct request_queue *q)
 		/*
 		 * Dispatch the command to the low-level driver.
 		 */
-		cmd->request->ref_count++;
 		rtn = scsi_dispatch_cmd(cmd);
 
-		/*
-		req_bio = cmd->request->bio;
-		while(req_bio) {
-			struct bio *bio = req_bio;
-			if (!bio->bi_phys_segments) {
-				printk(KERN_INFO "(%s) cmd : %p\n",__func__,cmd);	
-			}
-			req_bio = bio->bi_next;
-		}
-		*/
-		
 		spin_lock_irq(q->queue_lock);
 		if (rtn) { 
 			goto out_delay;
@@ -1653,7 +1642,7 @@ static void scsi_request_fn(struct request_queue *q)
 		/* UFS */
 		//if (req->cmd_bflags & REQ_ORDERED)
 		blk_request_dispatched(req);
-		__blk_put_request(q, req);
+		//__blk_put_request(q, req);
 	}
 
 	goto out;

@@ -718,8 +718,7 @@ static inline void check_stack_usage(void) {}
 void do_exit(long code)
 {
 	struct task_struct *tsk = current;
-	int group_dead, i;
-	struct hlist_node *tmp;
+	int group_dead;
 	struct storage_epoch *storage_epoch = NULL;
 	struct list_head *ptr;
 

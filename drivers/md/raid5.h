@@ -298,7 +298,6 @@ enum r5dev_flags {
 	R5_Discard,	/* Discard the stripe */
 	R5_OrderedIO,   /* SW Modified */
 	R5_BarrierIO,
-	R5_Cbarrier, /* Consider Cache Barrier Stripe */
 };
 
 /*
