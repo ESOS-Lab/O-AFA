@@ -339,7 +339,7 @@ static void init_stripe(struct stripe_head *sh, sector_t sector, int previous)
 	struct r5conf *conf = sh->raid_conf;
 	int i;
 	
-	unsigned long long temp_sector = sh->sector;
+	// unsigned long long temp_sector = sh->sector;
 		
 	BUG_ON(atomic_read(&sh->count) != 0);
 	BUG_ON(test_bit(STRIPE_HANDLE, &sh->state));
@@ -1268,42 +1268,27 @@ ops_run_prexor(struct stripe_head *sh, struct raid5_percpu *percpu,
 	return tx;
 }
 
-static void __raid_request_dispatched(struct bio *bio, sector_t bio_sector, sector_t raid_sector)
+static void __raid_request_dispatched(struct bio *bio, struct r5dev *dev)
 {
-	struct bio_vec *bvl;
-	struct page *bio_page;
-	int i, page_offset;
-	if(bio_sector >= raid_sector)
-		page_offset = (signed)(bio_sector - raid_sector) * 512;
-	else
-		page_offset = (signed)(raid_sector - bio_sector) * 512;
+	struct bio *wbi, *wbi2;
+	int i;
+	wbi = bio; 
 	
-	bio_for_each_segment(bvl, bio, i){
-		int len, clen, b_offset;
-		len = bvl->bv_len; b_offset = 0;
-
-		if(page_offset < 0) { /* Routine for First Page Handling */
-			b_offset = -page_offset;
-			page_offset += b_offset;
-			len -= b_offset;
+	while (wbi && wbi->bi_sector <
+		dev->sector + STRIPE_SECTORS) {
+		wbi2 = r5_next_bio(wbi, dev->sector);
+		if (atomic_dec_and_test(&wbi->dispatch_check)) {
+			for (i = 0; i < wbi->bi_vcnt; i++) {
+				struct bio_vec *bvec = &wbi->bi_io_vec[i];
+				struct page *page = bvec->bv_page;
+				if (page && PageDispatch(page))
+        				end_page_dispatch(page);
+			}
+			dispatch_bio_bh(wbi); 
 		}
-
-		if(len > 0 && page_offset + len > STRIPE_SIZE)
-			clen = STRIPE_SIZE - page_offset;
-		else
-			clen = len;
-
-		if(clen > 0) {
-			bio_page = bvl->bv_page;
-			if(bio_page && PageDispatch(bio_page)) 
-				/* SW Modified : Wake up Tracked Page */
-				end_page_dispatch(bio_page);
-		}
-
-		if(clen < len) /* Hit End of Page */
-			break;
-		page_offset += len;
+		wbi = wbi2;
 	}
+	
 }
 
 void raid_request_dispatched(struct request *req) 
@@ -1312,117 +1297,74 @@ void raid_request_dispatched(struct request *req)
 	struct stripe_head *sh;
 	struct bio *req_bio = NULL, *wbi;
 	struct r5dev *dev, *pdev;
-	struct mddev *mddev;
-	struct r5conf *conf;
-	unsigned long flags;
 	int i;
-
-	if (req->cmd_type != REQ_TYPE_FS)
-		return;
-
-	if (!req->__data_len && !(req->cmd_bflags & REQ_ORDERED))
-		return;
 
 	req_bio = req->bio;
 	
 	while (req_bio) {
-		
 		struct bio *bio = req_bio;
-
-		if (bio->bi_end_io == raid5_end_dbarrier_request 
-			&& !atomic_cmpxchg(&bio->dispatch_check, 0, 1)) {
-			
-			sh = bio->bi_private;
-			pdev = &sh->dev[sh->pd_idx];
-			
-			// Handle the case where cache barrier stripe is last arrived 
-			if(atomic_dec_and_test(&sh->dbarrier_count)
-				&& test_and_clear_bit(STRIPE_CACHE_BARRIER, &sh->state)
-				&& atomic_read(&pdev->req.dispatch_check)) {
-				for (i = sh->disks; i--;) {
-        				if (i == sh->pd_idx) 
-						continue;
-					dev = &sh->dev[i];                    
-       					wbi = dev->written;
-					if (wbi && atomic_read(&dev->req.dispatch_check)) { 
-        					while (wbi && wbi->bi_sector <               
-                					dev->sector + STRIPE_SECTORS) {
-							__raid_request_dispatched(wbi,               
-                        					wbi->bi_sector, dev->sector);        
-                					if (dispatch_bio_bh(wbi)) {                  
-                        					wbi = r5_next_bio(wbi, dev->sector); 
-                        					continue;                             
-                					} 
-                					wbi = r5_next_bio(wbi, dev->sector);         
-        					}
-					}                                            
-				}
-			}
-			req_bio = bio->bi_next;
-			continue;
-		}
-		
+	
+                if (bio->bi_end_io == raid5_end_dbarrier_request 
+                        && !atomic_cmpxchg(&bio->dispatch_check, 0, 1)) {
+                        
+                        sh = bio->bi_private;
+                        pdev = &sh->dev[sh->pd_idx];
+                        
+                        // Handle the case where cache barrier stripe is last arrived 
+                        if(atomic_dec_and_test(&sh->dbarrier_count)
+                                && test_and_clear_bit(STRIPE_CACHE_BARRIER, &sh->state)
+                                && atomic_read(&pdev->req.dispatch_check)) {
+                                for (i = sh->disks; i--;) {
+                                        if (i == sh->pd_idx) 
+                                                continue;
+                                       	dev = &sh->dev[i];                    
+                                        wbi = dev->written;
+                                       	if (wbi && 
+					atomic_cmpxchg(&dev->req.dispatch_check, 1, 2) == 1) { 
+						__raid_request_dispatched(wbi, dev);
+                                        }                                            
+                                } 
+                        }
+                        req_bio = bio->bi_next;
+                        continue;
+                }
+	
 		if (bio->bi_end_io != raid5_end_write_request) {
 			req_bio = bio->bi_next;
 			continue;
 		}
 
 		sh = bio->bi_private;
-		pdev = &sh->dev[sh->pd_idx];
 		dev = &sh->dev[bio->raid_disk_num];
-                wbi = NULL;
+		pdev = &sh->dev[sh->pd_idx];
                 wbi = dev->written;
 
 		if (bio->bi_rw & REQ_ORDERED 
-			&& !atomic_cmpxchg(&bio->dispatch_check, 0, 1)) { 
-			/* Need to check the case in which same sector has double wbi */
-			if (wbi && atomic_read(&pdev->req.dispatch_check)
-				&& !test_bit(STRIPE_CACHE_BARRIER, &sh->state)) { 
-				/* Case of Data Page */
-				while (wbi && wbi->bi_sector <
-					 dev->sector + STRIPE_SECTORS) { 
-			/* SW Modified : Track Dispatched Page using ops_run_biodrain routine */
-					__raid_request_dispatched(wbi, 
-						wbi->bi_sector, dev->sector);
-					if (dispatch_bio_bh(wbi)) {
-						wbi = r5_next_bio(wbi, dev->sector);
-						continue;
-					}
-					wbi = r5_next_bio(wbi, dev->sector);
-				}
-			}
-		}
-		if (bio->raid_disk_num == sh->pd_idx
-			&& !atomic_cmpxchg(&bio->dispatch_check, 0, 1)) { /* Case of Parity Page */
+			&& bio->raid_disk_num == sh->pd_idx 
+			&& !atomic_cmpxchg(&bio->dispatch_check, 0, 1)
+			&& !test_bit(STRIPE_CACHE_BARRIER, &sh->state)) {
 			for (i = sh->disks; i--;) {
 				if (i == sh->pd_idx)
 					continue;
 				dev = &sh->dev[i];
 				wbi = dev->written;
-				if (wbi && wbi->raid_epoch 
-					&& atomic_read(&dev->req.dispatch_check)
-					&& !test_bit(STRIPE_CACHE_BARRIER, &sh->state)) {
-					while (wbi && wbi->bi_sector <
-         					dev->sector + STRIPE_SECTORS
-         					&& atomic_read(&dev->req.dispatch_check)) {
-						/* SW Modified : Track Dispatched Page 
-						using ops_run_biodrain routine */
-        					__raid_request_dispatched(wbi, 
-							wbi->bi_sector, dev->sector);
-       						if (dispatch_bio_bh(wbi)) {
-               						wbi = r5_next_bio(wbi, dev->sector);
-               						continue;
-       						}
-       						wbi = r5_next_bio(wbi, dev->sector);
-					}			
+				if (wbi && atomic_cmpxchg(&dev->req.dispatch_check, 1, 2) == 1) {
+					__raid_request_dispatched(wbi, dev);
 				}
 			}
 		}
+
+		if (bio->bi_rw & REQ_ORDERED 
+			&& wbi && !atomic_cmpxchg(&bio->dispatch_check, 0, 1) 
+			&& !test_bit(STRIPE_CACHE_BARRIER, &sh->state)
+			&& atomic_read(&pdev->req.dispatch_check)
+			&& atomic_cmpxchg(&bio->dispatch_check, 1, 2) == 1) {
+			__raid_request_dispatched(wbi, dev);
+		}
+		
 		req_bio = bio->bi_next;
 	}
 }
-
-
 EXPORT_SYMBOL(raid_request_dispatched);
 
 static struct dma_async_tx_descriptor *
@@ -2132,19 +2074,8 @@ void raid5_end_dbarrier_request(struct bio *bi, int error)
                         		continue;                                           
                 		dev = &sh->dev[i];                                          
                		 	wbi = dev->written;                                         
-                		if (wbi	&& atomic_read(&dev->req.dispatch_check)) {         
-                        	//	printk(KERN_INFO "(%s) %lld : %d\n",              
-                        	//	      __func__,sh->sector,i);                     
-                        		while (wbi && wbi->bi_sector <                      
-                                		dev->sector + STRIPE_SECTORS) {             
-                                		__raid_request_dispatched(wbi,              
-                                        		wbi->bi_sector, dev->sector);       
-                                		if (dispatch_bio_bh(wbi)) {                 
-                                        		wbi = r5_next_bio(wbi, dev->sector);
-                                        		continue;                           
-                                		}                                           
-                                		wbi = r5_next_bio(wbi, dev->sector);        
-                        		}                                                   
+                		if (wbi	&& atomic_cmpxchg(&dev->req.dispatch_check, 1, 2 ) == 1) {  
+                                	__raid_request_dispatched(wbi, dev);
                 		}
         		}
 		}
@@ -2174,6 +2105,7 @@ void raid5_end_write_request(struct bio *bi, int error)
 	sector_t first_bad;
 	int bad_sectors;
 	int replacement = 0;
+	struct bio *wbi = NULL;
 
 	for (i = 0 ; i < disks; i++) {
 		if (bi == &sh->dev[i].req) {
@@ -2231,6 +2163,7 @@ void raid5_end_write_request(struct bio *bi, int error)
 	rdev_dec_pending(rdev, conf->mddev);
 
 	dev = &sh->dev[bi->raid_disk_num];
+	wbi = dev->written;
 
 	struct raid_epoch *raid_epoch = bi->raid_epoch;
 	if (raid_epoch && atomic_dec_and_test(&raid_epoch->e_count)) {
@@ -2239,6 +2172,12 @@ void raid5_end_write_request(struct bio *bi, int error)
         	//	,__func__,raid_epoch->pid 
         	//	,raid_epoch);                        
 		mempool_free(bi->raid_epoch, mddev->raid_epoch_pool);
+	}
+
+	if (bi->bi_rw & REQ_ORDERED 
+        	&& wbi 
+        	&& !atomic_cmpxchg(&bi->dispatch_check, 0, 1)) {
+        	__raid_request_dispatched(wbi,dev);
 	}
 
 	if (!test_and_clear_bit(R5_DOUBLE_LOCKED, &sh->dev[bi->raid_disk_num].flags)) {
@@ -2749,7 +2688,8 @@ static int add_stripe_bio(struct stripe_head *sh, struct bio *bi, int dd_idx, in
 			firstwrite = 1;
 		/* SW Modified */
 		else {
-			printk(KERN_INFO "Overlap Occur at Sector : %d\n",sh->sector);
+			printk(KERN_INFO "Overlap Occur at Sector : %llu\n",
+				(unsigned long long)sh->sector);
 			goto overlap;
 		}
 	} else
@@ -2768,6 +2708,7 @@ static int add_stripe_bio(struct stripe_head *sh, struct bio *bi, int dd_idx, in
 		bi->bi_next = *bip;
 	*bip = bi;
 	raid5_inc_bi_active_stripes(bi);
+	atomic_inc(&bi->dispatch_check);
 
 	if (forwrite) {
 		/* check if page is covered */
@@ -4626,7 +4567,7 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 	sector_t logical_sector, last_sector;
 	struct stripe_head *sh;
 	const int rw = bio_data_dir(bi);
-	int remaining;
+	int remaining, i;
 
 	/* Dummy Barrier Request */
 	/*
@@ -4657,6 +4598,7 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 	last_sector = bio_end_sector(bi);
 	bi->bi_next = NULL;
 	bi->bi_phys_segments = 1;	/* over-loaded to count active stripes */
+	atomic_set(&bi->dispatch_check, 1);
 
 	for (;logical_sector < last_sector; logical_sector += STRIPE_SECTORS) {
 		DEFINE_WAIT(w);
@@ -4759,7 +4701,7 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 			bi->raid_epoch = NULL;
 			if (bi->bi_rw & REQ_ORDERED) {
 				struct raid_epoch *raid_epoch = current->__raid_epoch;
-				unsigned long flags;
+				// unsigned long flags;
 
 				// if there is no raid epoch for this thread, create new one 
 				if (!raid_epoch) {
@@ -4842,6 +4784,17 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 			break;
 		}
 	}
+
+	if (bi->bi_rw & REQ_ORDERED && atomic_dec_and_test(&bi->dispatch_check)) {
+	        for (i = 0; i < bi->bi_vcnt; i++) {
+	                struct bio_vec *bvec = &bi->bi_io_vec[i];
+	                struct page *page = bvec->bv_page;
+	                if (page && PageDispatch(page))
+	                        end_page_dispatch(page);
+	        }
+	        dispatch_bio_bh(bi); 
+	}
+	
 
 	remaining = raid5_dec_bi_active_stripes(bi);
 	if (remaining == 0) {

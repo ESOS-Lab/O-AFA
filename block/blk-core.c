@@ -1524,10 +1524,9 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 	struct request *req;
 	unsigned int request_count = 0;
 	/* SW Modified */
-	unsigned int find = 0;
 	struct storage_epoch_list *storage_epoch_list = NULL;
 	struct storage_epoch *storage_epoch = NULL;
-	struct list_head *ptr, *ptrn;
+	struct list_head *ptr;
 	unsigned long flags;
 
 	/*
@@ -3270,25 +3269,12 @@ void blk_request_dispatched(struct request *req)
 		int i;
 		struct bio *bio = req_bio;
 			
-		if (req->cmd_bflags & REQ_ORDERED) {
-			if (bio->storage_epoch) {
-				struct storage_epoch *storage_epoch;
-				storage_epoch = bio->storage_epoch;
-				bio->storage_epoch = NULL;
-				if (atomic_dec_and_test(&storage_epoch->s_e_count)) {
-					//printk(KERN_INFO "[SWDEBUG] (%s)"
-					//	"PID : %d ClearEpoch : %p\n"
-					//	,__func__,bio->storage_epoch->pid
-					//	,bio->storage_epoch);
-					mempool_free(storage_epoch, storage_epoch->q->epoch_pool);
-				}
-				//else {
-				//	printk (KERN_INFO "[STORAGE EPOCH] (%s) PID : %d Device "
-				//		": %d Dec Epoch Count : %d\n"
-				//		,__func__,bio->storage_epoch->task->pid
-				//		,bio->raid_disk_num, 
-				//		(int) atomic_read(&storage_epoch->s_e_count));
-				//}
+		if (bio->storage_epoch) {
+			struct storage_epoch *storage_epoch;
+			storage_epoch = bio->storage_epoch;
+			bio->storage_epoch = NULL;
+			if (atomic_dec_and_test(&storage_epoch->s_e_count)) {
+				mempool_free(storage_epoch, storage_epoch->q->epoch_pool);
 			}
 		}
 
