@@ -199,6 +199,7 @@ static int journal_submit_commit_record(journal_t *journal,
 		return 0;
 
 	bh = jbd2_journal_get_descriptor_buffer(journal);
+	
 	if (!bh)
 		return 1;
 

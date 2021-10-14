@@ -206,7 +206,7 @@ struct stripe_head {
 	short			ddf_layout;/* use DDF ordering to calculate Q */
 	unsigned long		state;		/* state flags */
 	atomic_t		count;	      /* nr of active thread/requests */
-	atomic_t		dbarrier_count; /* SW Modified */
+	atomic_t		dispatch_count;
 	int			bm_seq;	/* sequence number for bitmap flushes */
 	int			disks;		/* disks in stripe */
 	enum check_states	check_state;
@@ -297,7 +297,6 @@ enum r5dev_flags {
 			 */
 	R5_Discard,	/* Discard the stripe */
 	R5_OrderedIO,   /* SW Modified */
-	R5_BarrierIO,
 };
 
 /*
@@ -458,8 +457,6 @@ struct r5conf {
 	spinlock_t		device_lock;
 	struct disk_info	*disks;
 	
-	int			node;
-
 	/* When taking over an array from a different personality, we store
 	 * the new thread here until we fully activate the array.
 	 */
@@ -530,7 +527,7 @@ static inline int algorithm_is_DDF(int layout)
 	return layout >= 8 && layout <= 10;
 }
 extern void raid_request_dispatched(struct request *req);
-extern void release_stripe(struct stripe_head *sh);
+// extern void release_stripe(struct stripe_head *sh);
 extern int md_raid5_congested(struct mddev *mddev, int bits);
 extern void md_raid5_kick_device(struct r5conf *conf);
 extern int raid5_set_cache_size(struct mddev *mddev, int size);

@@ -190,6 +190,7 @@ enum rq_flag_bits {
 	/* UFS project flag */
 	__REQ_ORDERED,		/* UFS: req for ordering guarantee */
 	__REQ_BARRIER,		/* UFS: post barrier flags*/
+	__REQ_SBARRIER,		/* SW Modified : Request the omittion of CBS to MD Layer */
 };
 
 #define REQ_WRITE		(1 << __REQ_WRITE)
@@ -206,6 +207,8 @@ enum rq_flag_bits {
 // UFS project 
 #define REQ_ORDERED		(1ULL << __REQ_ORDERED)
 #define REQ_BARRIER		(1ULL << __REQ_BARRIER)
+// SW Modified
+#define REQ_SBARRIER		(1ULL << __REQ_SBARRIER)
 
 #define REQ_FAILFAST_MASK \
 	(REQ_FAILFAST_DEV | REQ_FAILFAST_TRANSPORT | REQ_FAILFAST_DRIVER)

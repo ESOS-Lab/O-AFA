@@ -996,7 +996,7 @@ void scsi_io_completion(struct scsi_cmnd *cmd, unsigned int good_bytes)
 			scsi_print_command(cmd);
 		}
 		if (blk_end_request_err(req, error)) {
-			dump_stack();
+			// dump_stack();
 			scsi_requeue_command(q, cmd);
 		}
 		else
@@ -1636,7 +1636,18 @@ static void scsi_request_fn(struct request_queue *q)
 		rtn = scsi_dispatch_cmd(cmd);
 
 		spin_lock_irq(q->queue_lock);
-		if (rtn) { 
+		req_bio = req->bio; 
+		/*
+		while (req_bio) {
+			struct bio *bio = req_bio;
+			if (bio->bi_rw & REQ_BARRIER && !bio->bi_phys_segments) {
+				printk(KERN_INFO "[SCSI Driver] (%s) bi : %p Dummy Barrier Error Code : %llx\n",
+					__func__, bio, rtn);
+			}
+			req_bio = bio->bi_next;
+		}
+		*/
+		if (rtn) {
 			goto out_delay;
 		}
 		/* UFS */

@@ -735,7 +735,7 @@ blk_init_allocated_queue(struct request_queue *q, request_fn_proc *rfn,
 
 	/* UFS */
 	if (!q->epoch_pool)
-		q->epoch_pool = mempool_create_node(BLKDEV_MAX_RQ, mempool_alloc_slab,
+		q->epoch_pool = mempool_create_node(BLKDEV_MIN_RQ, mempool_alloc_slab,
 				mempool_free_slab, epoch_cachep, GFP_NOFS, q->node);
 	if (!q->epoch_pool) {
 		printk(KERN_ERR "epoch_pool create error\n");

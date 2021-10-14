@@ -2603,7 +2603,7 @@ retry:
 	/* SW Modified : In the case of allocating write, we don't need to set barrier flag 
 	 * 		 Since JBD2 issue barrier block I/O 				    
 	 */
-	if (!current->allocating_write && wbc->sync_mode == WB_BARRIER_ALL) {
+	if (wbc->sync_mode == WB_BARRIER_ALL && !current->allocating_write) {
 		unsigned long flags;
 		struct raid_epoch *raid_epoch = current->__raid_epoch;
 		if (raid_epoch) {

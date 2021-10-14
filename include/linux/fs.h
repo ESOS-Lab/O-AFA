@@ -192,6 +192,7 @@ typedef void (dio_iodone_t)(struct kiocb *iocb, loff_t offset,
 // UFS project
 #define WRITE_ORDERED		(WRITE | REQ_SYNC | REQ_NOIDLE | REQ_ORDERED)
 #define WRITE_BARRIER		(WRITE | REQ_SYNC | REQ_NOIDLE | REQ_ORDERED | REQ_BARRIER)
+#define WRITE_SBARRIER		(WRITE | REQ_SYNC | REQ_NOIDLE | REQ_ORDERED | REQ_SBARRIER)
 
 /*
  * Attribute flags.  These should be or-ed together to figure out what
