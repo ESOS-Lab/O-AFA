@@ -391,6 +391,9 @@ static void md_end_flush(struct bio *bio, int err)
 	struct mddev *mddev = rdev->mddev;
 
 	rdev_dec_pending(rdev, mddev);
+	
+	atomic_set(&rdev->io_flag, 0);
+	atomic_set(&rdev->cb_flag, 0);
 
 	if (atomic_dec_and_test(&mddev->flush_pending)) {
 		/* The pre-request flush has finished */
@@ -502,7 +505,7 @@ static void md_submit_flush_data(struct work_struct *ws)
 {
 	struct mddev *mddev = container_of(ws, struct mddev, flush_work);
 	struct bio *bio = mddev->flush_bio;
-
+	
 	if (bio->bi_size == 0)
 		/* an empty barrier - all done */
 		bio_endio(bio, 0);
@@ -3343,6 +3346,8 @@ int md_rdev_init(struct md_rdev *rdev)
 	atomic_set(&rdev->nr_pending, 0);
 	atomic_set(&rdev->read_errors, 0);
 	atomic_set(&rdev->corrected_errors, 0);
+	atomic_set(&rdev->io_flag, 0);
+	atomic_set(&rdev->cb_flag, 0);
 
 	INIT_LIST_HEAD(&rdev->same_set);
 	init_waitqueue_head(&rdev->blocked_wait);

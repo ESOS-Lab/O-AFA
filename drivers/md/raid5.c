@@ -552,7 +552,7 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 	int i, k, disks = sh->disks;
 	unsigned int ordered = false;
 	unsigned long long bdisk_num = 0;
-	struct bio *temp = NULL, *wbi1 = NULL, *wbi2 = NULL;
+	// struct bio *temp = NULL, *wbi1 = NULL, *wbi2 = NULL;
 	
 	might_sleep();
 	for (i = disks; i--; ) {
@@ -612,7 +612,7 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 	for (i = disks; i--; ) {
 		unsigned long long rw;
 		int replace_only = 0;
-		struct bio *bi, *rbi;
+		struct bio *bi, *rbi, *cbi;
 		struct md_rdev *rdev, *rrdev = NULL;
 		if (test_and_clear_bit(R5_Wantwrite, &sh->dev[i].flags)) {
 			if (test_and_clear_bit(R5_WantFUA, &sh->dev[i].flags))
@@ -626,8 +626,7 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 			if (ordered && sh->pd_idx == i) {
 				rw |= REQ_ORDERED;
 			}
-			if (bdisk_num >> i != 0 
-				|| (i == sh->pd_idx && test_bit(STRIPE_CACHE_BARRIER, &sh->state))) {
+			if (i == sh->pd_idx && bdisk_num) {
 				rw |= REQ_BARRIER;
 			}
 		} else if (test_and_clear_bit(R5_Wantread, &sh->dev[i].flags))
@@ -774,6 +773,31 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
         		//		i, bi->bi_rw);                                
 			bi->obi = NULL;
 			atomic_inc(&sh->dispatch_count);
+
+			if (bi->bi_rw & (WRITE | REQ_ORDERED)) {
+				atomic_set(&rdev->io_flag, 1);
+				if (atomic_cmpxchg(&rdev->cb_flag, 1, 0)) {
+					DECLARE_COMPLETION_ONSTACK(wait);
+					cbi = bio_alloc_mddev(GFP_NOIO, 0, mddev);
+					cbi->bi_private = &wait;
+					// cbi->bi_private = NULL;
+					cbi->bi_bdev = rdev->bdev;
+					cbi->bi_rw = REQ_WRITE | REQ_SYNC \
+						| REQ_ORDERED | REQ_BARRIER;
+					cbi->raid_disk_num = i;
+					cbi->bi_end_io = raid5_end_dbarrier_request;
+					cbi->raid_epoch = NULL;
+					atomic_set(&cbi->dispatch_check, 0);
+					atomic_inc(&rdev->nr_pending);
+					atomic_inc(&rdev->nr_pending);
+					cbi->obi = NULL;
+					bio_get(cbi);
+					generic_make_request(cbi);
+					wait_for_completion_io(&wait);
+					rdev_dec_pending(rdev, conf->mddev);
+					bio_put(cbi);
+				}
+			}
 			generic_make_request(bi);
 		}
 		if (rrdev) {
@@ -833,9 +857,12 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 		for (i = disks; i--; ) {
 			if (bdisk_num >> i != 0 || i == sh->pd_idx)
 				continue;
-			struct bio *bi;
+			// struct bio *bi;
 			struct md_rdev *rdev;
 			rdev = rcu_dereference(conf->disks[i].rdev);
+			if (atomic_cmpxchg(&rdev->io_flag, 1, 0))
+				atomic_set(&rdev->cb_flag, 1);
+			/*
 			bi = bio_alloc_mddev(GFP_NOIO, 0, mddev);
 			bi->bi_private = sh;
 			bi->bi_bdev = rdev->bdev;
@@ -852,6 +879,7 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 			atomic_inc(&sh->dispatch_count);
 			generic_make_request(bi);
 			rdev_dec_pending(rdev, conf->mddev);
+			*/
 		}
 	}
 }
@@ -1328,8 +1356,8 @@ void raid_request_dispatched(struct request *req)
 	while (req_bio) {
 		struct bio *bio = req_bio;
 	
-		if (bio->bi_end_io != raid5_end_write_request
-			&& bio->bi_end_io != raid5_end_dbarrier_request) {
+		if (bio->bi_end_io != raid5_end_write_request) {
+			// && bio->bi_end_io != raid5_end_dbarrier_request) {
 			req_bio = bio->bi_next;
 			continue;
 		}
@@ -2033,6 +2061,7 @@ static void raid5_end_read_request(struct bio * bi, int error)
 
 void raid5_end_dbarrier_request(struct bio *bi, int error)
 {
+	/*
 	struct md_rdev *uninitialized_var(rdev);
 	struct stripe_head *sh;
 	struct r5conf *conf;
@@ -2047,7 +2076,12 @@ void raid5_end_dbarrier_request(struct bio *bi, int error)
 
         rdev = conf->disks[bi->raid_disk_num].rdev;
         rdev_dec_pending(rdev, conf->mddev);
-	
+	*/
+
+	if (bi->bi_private)
+		complete(bi->bi_private);	
+
+	/*
 	if (!atomic_cmpxchg(&bi->dispatch_check, 0, 1)                     
         	&& atomic_dec_and_test(&sh->dispatch_count)) {              
         	for (i = sh->disks; i--;) {                                 
@@ -2061,6 +2095,7 @@ void raid5_end_dbarrier_request(struct bio *bi, int error)
 	
 	set_bit(STRIPE_HANDLE, &sh->state);
 	release_stripe(sh);
+	*/
 
 	bio_put(bi);
         return;
@@ -4625,6 +4660,8 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 
 		sh = get_active_stripe(conf, new_sector, previous,
 				       (bi->bi_rw&RWA_MASK), 0);
+		// printk(KERN_INFO "[Linux MD] %llu : %llu Bio : %p Stripe Address : %p\n"
+		//		,STRIPE_SECTORS, conf->chunk_sectors, bi,sh);
 		if (sh) {
 			if (unlikely(previous)) {
 				/* expansion might have moved on while waiting for a
@@ -4738,7 +4775,8 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 				//			,bi->raid_epoch
 				//			,atomic_read(&bi->raid_epoch->e_count));
 				
-				if (bi->bi_rw & REQ_BARRIER) {
+				if (last_sector - logical_sector <= STRIPE_SECTOR 
+					&& bi->bi_rw & REQ_BARRIER) {
 					spin_lock(&bi->raid_epoch->raid_epoch_lock);
 					bi->raid_epoch->barrier = 1;
 					spin_unlock(&bi->raid_epoch->raid_epoch_lock);

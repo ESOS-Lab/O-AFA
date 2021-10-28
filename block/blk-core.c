@@ -1469,6 +1469,9 @@ static bool attempt_plug_merge(struct request_queue *q, struct bio *bio,
 	struct request *rq;
 	bool ret = false;
 
+	if (bio->bi_rw & REQ_BARRIER && !bio->bi_phys_segments)
+		return ret;
+
 	plug = current->plug;
 	if (!plug)
 		goto out;
@@ -1548,6 +1551,7 @@ void blk_queue_bio(struct request_queue *q, struct bio *bio)
 	}
 
 	bio->storage_epoch = NULL;
+
 	/* UFS */
 	if (bio->bi_rw & REQ_ORDERED) {
 

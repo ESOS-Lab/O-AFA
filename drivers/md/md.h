@@ -94,6 +94,8 @@ struct md_rdev {
 					 * only maintained for arrays that
 					 * support hot removal
 					 */
+	atomic_t	io_flag;	/* SW Modified */
+	atomic_t	cb_flag;	/* SW Modified */
 	atomic_t	read_errors;	/* number of consecutive read errors that
 					 * we have tried to ignore.
 					 */
