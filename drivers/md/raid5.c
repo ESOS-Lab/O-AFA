@@ -1336,8 +1336,8 @@ void raid_request_dispatched(struct request *req)
 	while (req_bio) {
 		struct bio *bio = req_bio;
 	
-		if (bio->bi_end_io != raid5_end_write_request) {
-			// && bio->bi_end_io != raid5_end_dbarrier_request) {
+		if (bio->bi_end_io != raid5_end_write_request
+			&& bio->bi_end_io != raid5_end_dbarrier_request) {
 			req_bio = bio->bi_next;
 			continue;
 		}
