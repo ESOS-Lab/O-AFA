@@ -846,7 +846,7 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 		for (i = disks; i--; ) {
 			if (bdisk_num >> i != 0 || i == sh->pd_idx)
 				continue;
-			// struct bio *bi;
+			struct bio *bi;
 			struct md_rdev *rdev;
 			rdev = rcu_dereference(conf->disks[i].rdev);
 			//if (atomic_cmpxchg(&rdev->io_flag, 1, 0))
@@ -1320,7 +1320,6 @@ static void __raid_request_dispatched(struct bio *bio)
 		}
 		dispatch_bio_bh(bio); 
 	}
-	wbi = wbi2;
 }
 
 void raid_request_dispatched(struct request *req) 
