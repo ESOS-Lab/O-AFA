@@ -1781,7 +1781,7 @@ void blk_dump_cmd(char *buf, struct request *rq)
 	}
 }
 
-void blk_fill_rwbs(char *rwbs, u32 rw, int bytes)
+void blk_fill_rwbs(char *rwbs, u64 rw, int bytes)
 {
 	int i = 0;
 
@@ -1807,6 +1807,11 @@ void blk_fill_rwbs(char *rwbs, u32 rw, int bytes)
 		rwbs[i++] = 'M';
 	if (rw & REQ_SECURE)
 		rwbs[i++] = 'E';
+	/* SW Modified */
+	if (rw & REQ_ORDERED)
+		rwbs[i++] = 'O';
+	if (rw & REQ_BARRIER)
+		rwbs[i++] = 'B';
 
 	rwbs[i] = '\0';
 }

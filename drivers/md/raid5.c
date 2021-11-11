@@ -550,24 +550,27 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 	struct r5conf *conf = sh->raid_conf;
 	struct mddev *mddev = conf->mddev;
 	int i, k, disks = sh->disks;
-	unsigned int ordered = false;
+	unsigned int ordered = false, barrier = false;
 	unsigned long long bdisk_num = 0;
 	// struct bio *temp = NULL, *wbi1 = NULL, *wbi2 = NULL;
+
+	atomic_set(&sh->dispatch_count, 0);
 	
 	might_sleep();
 	for (i = disks; i--; ) {
-		if(test_bit(R5_Wantwrite, &sh->dev[i].flags)) {
+		if(test_bit(R5_Wantwrite, &sh->dev[i].flags) 
+			&& test_bit(R5_OrderedIO, &sh->dev[i].flags)) {
 			struct r5dev *dev = &sh->dev[i];
         		struct bio *obi = dev->written;                
 			unsigned int count = 0;
 			struct raid_epoch *raid_epoch = NULL;
-        		if (test_bit(R5_OrderedIO, &sh->dev[i].flags) && obi) { 
+        		if (obi) { 
 				ordered = true;
 				raid_epoch = obi->raid_epoch;
 				if (!raid_epoch)
 					panic("No RAID EPOCH!");
 				spin_lock(&raid_epoch->raid_epoch_lock);
-				if (raid_epoch->barrier) {
+				if (!barrier && raid_epoch->barrier) {
 					for (k = i + 1; k--; ) {
 						if (test_bit(R5_Wantwrite, &sh->dev[k].flags) 
 							&& test_bit(R5_OrderedIO, &sh->dev[k].flags)
@@ -579,25 +582,15 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 						
 					}	
 					if (raid_epoch->pending == count) {
-						bdisk_num |= 1 << i;
+						barrier = true;
 					}
 				}
-				// SW : Need to Check, What if pending is increased twice 
-				// by calling make_request() twice at the same device of stripe? 
         	        	raid_epoch->pending--; 
-				/*
-				temp = NULL;
-				temp = obi->bi_next;
-				while(temp && temp->raid_epoch && temp->raid_epoch->pid 
-					== obi->raid_epoch->pid) {
-					raid_epoch->pending--;
-					temp = temp->bi_next;
-				}
-				*/
 				spin_unlock(&raid_epoch->raid_epoch_lock);
         		}
 		}                                                    
 	}       
+
 	for (i = disks; i--; ) {
 		unsigned long long rw;
 		int replace_only = 0;
@@ -615,7 +608,8 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 			if (ordered && sh->pd_idx == i) {
 				rw |= REQ_ORDERED;
 			}
-			if (i == sh->pd_idx && bdisk_num) {
+			if (barrier) {
+				bdisk_num |= 1 << i;
 				rw |= REQ_BARRIER;
 			}
 		} else if (test_and_clear_bit(R5_Wantread, &sh->dev[i].flags))
@@ -759,7 +753,8 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 			//		(unsigned long long)sh->sector,     
         		//		i, bi->bi_rw);                                
 			bi->obi = NULL;
-			atomic_inc(&sh->dispatch_count);
+			if (bi->bi_rw & WRITE)
+				atomic_inc(&sh->dispatch_count);
 
 			/*
 			if (bi->bi_rw & (WRITE | REQ_ORDERED)) {
@@ -787,6 +782,7 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 				}
 			}
 			*/
+
 			generic_make_request(bi);
 		}
 		if (rrdev) {
@@ -842,9 +838,9 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 	}
 
 	/* SW Modified : The part of patent named "Cache Barrier Stripe" */
-	if (bdisk_num) {
+	if (barrier) {
 		for (i = disks; i--; ) {
-			if (bdisk_num >> i != 0 || i == sh->pd_idx)
+			if (bdisk_num >> i == 1)
 				continue;
 			struct bio *bi;
 			struct md_rdev *rdev;
@@ -1312,6 +1308,7 @@ static void __raid_request_dispatched(struct bio *bio)
 	int i;
 	
 	if (atomic_dec_and_test(&bio->dispatch_check)) {
+		trace_block_bio_dispatch(bio);
 		for (i = 0; i < bio->bi_vcnt; i++) {
 			struct bio_vec *bvec = &bio->bi_io_vec[i];
 			struct page *page = bvec->bv_page;
@@ -2059,6 +2056,7 @@ void raid5_end_dbarrier_request(struct bio *bi, int error)
 	if (bi->bi_private)
 		complete(bi->bi_private);	
 	*/
+
 	if (!atomic_cmpxchg(&bi->dispatch_check, 0, 1)                     
         	&& atomic_dec_and_test(&sh->dispatch_count)) {              
         	for (i = sh->disks; i--;) {                                 
@@ -4594,6 +4592,8 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 	bi->bi_phys_segments = 1;	/* over-loaded to count active stripes */
 	atomic_set(&bi->dispatch_check, 1);
 
+	trace_block_bio_raid_queue(bi);
+
 	for (;logical_sector < last_sector; logical_sector += STRIPE_SECTORS) {
 		DEFINE_WAIT(w);
 		int previous;
@@ -4636,8 +4636,10 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 
 		sh = get_active_stripe(conf, new_sector, previous,
 				       (bi->bi_rw&RWA_MASK), 0);
+
 		// printk(KERN_INFO "[Linux MD] %llu : %llu Bio : %p Stripe Address : %p\n"
 		//		,STRIPE_SECTORS, conf->chunk_sectors, bi,sh);
+
 		if (sh) {
 			if (unlikely(previous)) {
 				/* expansion might have moved on while waiting for a
