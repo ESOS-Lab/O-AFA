@@ -558,8 +558,8 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 	
 	might_sleep();
 	for (i = disks; i--; ) {
-		if(test_bit(R5_Wantwrite, &sh->dev[i].flags) 
-			&& test_bit(R5_OrderedIO, &sh->dev[i].flags)) {
+		if(i != sh->pd_idx && test_bit(R5_Wantwrite, &sh->dev[i].flags) 
+			&& test_and_clear_bit(R5_OrderedIO, &sh->dev[i].flags)) {
 			struct r5dev *dev = &sh->dev[i];
         		struct bio *obi = dev->written;                
 			unsigned int count = 0;
@@ -573,7 +573,8 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 				if (!barrier && raid_epoch->barrier) {
 					for (k = i + 1; k--; ) {
 						if (test_bit(R5_Wantwrite, &sh->dev[k].flags) 
-							&& test_bit(R5_OrderedIO, &sh->dev[k].flags)
+							&& test_bit(R5_OrderedIO, 
+								&sh->dev[k].flags)
 							&& k !=sh->pd_idx 
 							&& sh->dev[k].written->raid_epoch->pid
 							== obi->raid_epoch->pid) {
@@ -603,9 +604,7 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 				rw = WRITE;
 			if (test_bit(R5_Discard, &sh->dev[i].flags))
 				rw |= REQ_DISCARD;
-			if (test_and_clear_bit(R5_OrderedIO, &sh->dev[i].flags))
-				rw |= REQ_ORDERED;
-			if (ordered && sh->pd_idx == i) {
+			if (ordered) {
 				rw |= REQ_ORDERED;
 			}
 			if (barrier) {
@@ -4593,6 +4592,8 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 	atomic_set(&bi->dispatch_check, 1);
 
 	trace_block_bio_raid_queue(bi);
+	/* SW Modified */
+	bi->raid_epoch = NULL;
 
 	for (;logical_sector < last_sector; logical_sector += STRIPE_SECTORS) {
 		DEFINE_WAIT(w);
@@ -4696,8 +4697,8 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 			finish_wait(&conf->wait_for_overlap, &w);
 
 			/* SW Modified */
-			bi->raid_epoch = NULL;
-			if (bi->bi_rw & REQ_ORDERED) {
+			if (bi->bi_rw & REQ_ORDERED && !bi->raid_epoch){
+				
 				struct raid_epoch *raid_epoch = current->__raid_epoch;
 				// unsigned long flags;
 
@@ -4741,10 +4742,21 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 				
 				bi->raid_epoch = raid_epoch;
 				spin_lock(&bi->raid_epoch->raid_epoch_lock);
-				bi->raid_epoch->pending++;
+				bi->raid_epoch->pending = (logical_sector - last_sector) / STRIPE_SECTORS;
 				atomic_inc(&bi->raid_epoch->e_count);
+				if (bi->bi_rw & REQ_BARRIER) {
+					bi->raid_epoch->barrier = 1;
+				//printk(KERN_INFO "[RAID EPOCH] (%s) PID : %d "
+				//			"Finish RAID EPOCH! : %p"
+				//			"Epoch Count : %d\n"
+				//			,__func__
+				//			,current->pid
+				//			,raid_epoch
+				//			,atomic_read(&raid_epoch->e_count));
+				}
 				spin_unlock(&bi->raid_epoch->raid_epoch_lock);
-				
+				current->__raid_epoch = NULL;
+				atomic_dec(&bi->raid_epoch->e_count);
 				//printk(KERN_INFO "[RAID EPOCH] (%s) PID : %d %llu : %d "
 				//			"Epoch : %p "
 				//			"Epoch Count : %d\n"
@@ -4752,22 +4764,6 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 				//			,(unsigned long long) sh->sector, dd_idx
 				//			,bi->raid_epoch
 				//			,atomic_read(&bi->raid_epoch->e_count));
-				
-				if (last_sector - logical_sector < STRIPE_SECTORS
-					&& bi->bi_rw & REQ_BARRIER) {
-					spin_lock(&bi->raid_epoch->raid_epoch_lock);
-					bi->raid_epoch->barrier = 1;
-					spin_unlock(&bi->raid_epoch->raid_epoch_lock);
-					current->__raid_epoch = NULL;
-					atomic_dec(&bi->raid_epoch->e_count);
-					//printk(KERN_INFO "[RAID EPOCH] (%s) PID : %d "
-					//			"Finish RAID EPOCH! : %p"
-					//			"Epoch Count : %d\n"
-					//			,__func__
-					//			,current->pid
-					//			,raid_epoch
-					//			,atomic_read(&raid_epoch->e_count));
-				}
 			}
 			set_bit(STRIPE_HANDLE, &sh->state);
 			clear_bit(STRIPE_DELAYED, &sh->state);
