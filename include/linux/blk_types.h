@@ -87,6 +87,7 @@ struct bio {
 	atomic_t		bi_cnt;		/* pin count */
 	int			raid_disk_num;  /* SW Modified */
 	atomic_t		dispatch_check; /* SW Modified */
+	atomic_t		transfer_check; /* SW Modified */
 	struct bio		*obi;		/* SW Modified */
 
 	struct bio_vec		*bi_io_vec;	/* the actual vec list */
@@ -190,7 +191,7 @@ enum rq_flag_bits {
 	/* UFS project flag */
 	__REQ_ORDERED,		/* UFS: req for ordering guarantee */
 	__REQ_BARRIER,		/* UFS: post barrier flags*/
-	__REQ_SBARRIER,		/* SW Modified : Request the omittion of CBS to MD Layer */
+	__REQ_COMMIT,		/* SW Modified : Request CBS to MD Layer */
 };
 
 #define REQ_WRITE		(1 << __REQ_WRITE)
@@ -208,7 +209,7 @@ enum rq_flag_bits {
 #define REQ_ORDERED		(1ULL << __REQ_ORDERED)
 #define REQ_BARRIER		(1ULL << __REQ_BARRIER)
 // SW Modified
-#define REQ_SBARRIER		(1ULL << __REQ_SBARRIER)
+#define REQ_COMMIT		(1ULL << __REQ_COMMIT)
 
 #define REQ_FAILFAST_MASK \
 	(REQ_FAILFAST_DEV | REQ_FAILFAST_TRANSPORT | REQ_FAILFAST_DRIVER)

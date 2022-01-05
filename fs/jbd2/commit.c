@@ -229,13 +229,13 @@ static int journal_submit_commit_record(journal_t *journal,
 
 	if (journal->j_flags & JBD2_BARRIER && !JBD2_HAS_INCOMPAT_FEATURE(journal, JBD2_FEATURE_INCOMPAT_ASYNC_COMMIT))
 #ifdef UFSBARRIER
-		ret = submit_bh64(WRITE_BARRIER, bh);
+		ret = submit_bh64(WRITE_BARRIER | REQ_COMMIT, bh);
 #else
 		ret = submit_bh(WRITE_SYNC | WRITE_FLUSH_FUA, bh);
 #endif
 	else
 #ifdef UFSBARRIER
-		ret = submit_bh64(WRITE_BARRIER, bh);
+		ret = submit_bh64(WRITE_BARRIER | REQ_COMMIT, bh);
 #else
 		ret = submit_bh(WRITE_SYNC, bh);
 #endif
@@ -1755,6 +1755,7 @@ start_journal_io:
 				      JBD2_FEATURE_INCOMPAT_ASYNC_COMMIT)) {
 		err = journal_submit_commit_record(journal, commit_transaction,
 						 &cbh, crc32_sum);
+		printk(KERN_INFO "(%s) err : %d\n",__func__,err);
 		if (err)
 			__jbd2_journal_abort_hard(journal);
 	}
@@ -1856,6 +1857,7 @@ start_journal_io:
 				       JBD2_FEATURE_INCOMPAT_ASYNC_COMMIT)) {
 		err = journal_submit_commit_record(journal, commit_transaction,
 						&cbh, crc32_sum);
+		printk(KERN_INFO "(%s) err : %d\n",__func__,err);
 		if (err)
 			__jbd2_journal_abort_hard(journal);
 	}

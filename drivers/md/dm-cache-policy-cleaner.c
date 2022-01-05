@@ -365,6 +365,8 @@ static int wb_writeback_work(struct dm_cache_policy *pe,
 	struct wb_cache_entry *e;
 	unsigned long flags;
 
+	dump_stack();
+
 	spin_lock_irqsave(&p->lock, flags);
 
 	e = get_next_dirty_entry(p);

@@ -33,6 +33,7 @@
  */
 #define MD_MAX_BADBLOCKS	(PAGE_SIZE/8)
 
+#define CBS_SIZE (1ULL << 18) /* SW Modified */
 /*
  * MD's 'extended' device
  */
@@ -248,6 +249,7 @@ struct mddev {
 	int				max_disks;
 	sector_t			dev_sectors; 	/* used size of
 							 * component devices */
+	sector_t			jc_sectors;
 	sector_t			array_sectors; /* exported array size */
 	int				external_size; /* size managed
 							* externally */
@@ -435,6 +437,7 @@ struct mddev {
 
 	/* SW Modified */
 	mempool_t			*raid_epoch_pool;
+	int 				cbs_mapping[CBS_SIZE >> 8];
 };
 
 /* SW Modified */

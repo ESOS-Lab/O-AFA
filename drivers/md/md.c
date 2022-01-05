@@ -1726,6 +1726,8 @@ static int super_1_validate(struct mddev *mddev, struct md_rdev *rdev)
 		mddev->layout = le32_to_cpu(sb->layout);
 		mddev->raid_disks = le32_to_cpu(sb->raid_disks);
 		mddev->dev_sectors = le64_to_cpu(sb->size);
+		printk(KERN_INFO "(%s) dev_sectors : %d\n",__func__,mddev->dev_sectors);
+		mddev->jc_sectors = mddev->dev_sectors + 8;/* SW Modified */
 		mddev->events = ev1;
 		mddev->bitmap_info.offset = 0;
 		mddev->bitmap_info.space = 0;
@@ -3476,6 +3478,34 @@ static void analyze_sbs(struct mddev * mddev)
 			clear_bit(In_sync, &rdev->flags);
 		}
 	}
+}
+
+static void analyze_cbs (struct mddev *mddev)
+{
+	/*
+	struct bio *bio = bio_alloc_mddev(GFP_NOIO, 1, mddev);
+	struct completion event;
+	int ret;
+	
+	struct page *page_ptr;
+	struct void *mem_ptr;
+
+	rw = READ | REQ_SYNC;
+
+	bio->bi_bdev = rdev->bdev;
+	bio->bi_sector = mddev->dev_sectors;
+	if(!bio_add_page(bio, page, (CBS_SIZE << 1), 0))
+		return -EIO;
+	init_completion(&event);
+	bio->bi_private = &event;
+	bio->bi_end_io = bi_complete;
+	submit_bio(rw, bio);
+	wait_for_completion(&event);
+
+	ret = test_bit(BIO_UPTODATE, &bio->bi_flags);
+	bio_put(bio);
+	return ret;
+	*/
 }
 
 /* Read a fixed-point number.

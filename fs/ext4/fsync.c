@@ -256,6 +256,7 @@ int ext4_fbarrier_file(struct file *file, loff_t start, loff_t end, int datasync
 
 	commit_tid = datasync ? ei->i_datasync_tid : ei->i_sync_tid;
 
+ 	/*
 	if (!datasync && journal->j_flags & JBD2_BARRIER &&
 		!jbd2_trans_will_send_data_barrier(journal, commit_tid))
 		needs_barrier = true;
@@ -266,7 +267,7 @@ int ext4_fbarrier_file(struct file *file, loff_t start, loff_t end, int datasync
 		current->barrier_fail = 0;
 		goto out;
 	}
-	
+	*/
 	ret = jbd2_complete_transaction(journal, commit_tid);
 
  out:

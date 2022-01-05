@@ -61,6 +61,12 @@
 #include "bitmap.h"
 
 // #include "md-trace.h"
+// #define CBS_SIZE (1ULL << 18)
+
+struct cbs_payload { /* SW Modified */                                      
+        __le64 lba;                  
+        __le64 r_sector;        
+} __attribute__ ((__packed__));                                           
 
 static bool devices_handle_discard_safely = false;
 module_param(devices_handle_discard_safely, bool, 0644);
@@ -1331,6 +1337,18 @@ void raid_request_dispatched(struct request *req)
 	while (req_bio) {
 		struct bio *bio = req_bio;
 	
+		if (bio->bi_end_io == raid5_end_cbs_request) {
+			if (atomic_dec_and_test(&bio->obi->dispatch_check)) {
+				for (i = 0; i < bio->obi->bi_vcnt; i++) {
+        				struct bio_vec *bvec = &bio->obi->bi_io_vec[i];
+        				struct page *page = bvec->bv_page;
+        				if (page && PageDispatch(page))
+                				end_page_dispatch(page);
+				}
+				dispatch_bio_bh(bio->obi);	
+			}
+		}
+	
 		if (bio->bi_end_io != raid5_end_write_request
 			&& bio->bi_end_io != raid5_end_dbarrier_request) {
 			req_bio = bio->bi_next;
@@ -2075,6 +2093,28 @@ void raid5_end_dbarrier_request(struct bio *bi, int error)
 	
 }
 EXPORT_SYMBOL(raid5_end_dbarrier_request);
+
+void raid5_end_cbs_request(struct bio *bi, int error)
+{
+	struct md_rdev *rdev = bi->bi_private;
+	struct mddev *mddev = rdev->mddev;
+
+        rdev_dec_pending(rdev, mddev);
+	printk(KERN_INFO "(%s) Free Page : %p\n",__func__,page_address(bio_page(bi)));
+	free_pages(page_address(bio_page(bi)), 0);
+				
+	printk(KERN_INFO "(%s) bi : %p Transfer Count :%d\n",__func__, bi->obi,
+		atomic_read(&bi->obi->transfer_check));
+
+     	if (atomic_dec_and_test(&bi->obi->transfer_check)) {              
+		bio_endio(bi->obi, 0);	
+        }
+	
+	bio_put(bi);
+        return;
+	
+}
+EXPORT_SYMBOL(raid5_end_cbs_request);
 
 void raid5_end_write_request(struct bio *bi, int error)
 {
@@ -4559,6 +4599,7 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 	struct stripe_head *sh;
 	const int rw = bio_data_dir(bi);
 	int remaining, i;
+	struct md_rdev *rdev;
 
 	/* Dummy Barrier Request */
 	/*
@@ -4567,9 +4608,82 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 		return;
 	}
 	*/
-	
+
 	if (unlikely(bi->bi_rw & REQ_FLUSH)) {
 		md_flush_request(mddev, bi);
+		return;
+	}
+
+	if (unlikely(bi->bi_rw & REQ_COMMIT)) { /* SW Modified */
+		void *mem_ptr;
+		struct page *page_ptr;
+		struct cbs_payload *payload;
+
+		dump_stack();
+		
+		printk(KERN_INFO "(%s) Commit Block Request Start bi : %p\n",__func__,bi);
+		
+		atomic_set(&bi->transfer_check, 0);
+		rcu_read_lock();
+		rdev_for_each_rcu(rdev, mddev)
+			if(rdev->raid_disk >= 0 &&
+				!test_bit(Faulty, &rdev->flags)) { 
+				/* Load Metadata to the page */
+				page_ptr = alloc_pages(GFP_NOIO, 0);
+				payload = page_address(page_ptr); 
+				printk(KERN_INFO "(%s) Page Alloc : %p\n",__func__,payload);
+				payload->lba = cpu_to_le64(
+					(unsigned long long) bi->bi_sector); 
+				payload->r_sector = cpu_to_le64(
+					(unsigned long long) mddev->jc_sectors);
+				
+				/* Issue Metadata First */
+				struct bio *bio;
+				bio = bio_alloc_mddev(GFP_NOIO, 0, mddev);
+				bio->bi_bdev = rdev->bdev;
+				bio->bi_rw = WRITE_ORDERED;
+				bio->bi_end_io = raid5_end_cbs_request;
+				bio->bi_private = rdev;
+				bio->bi_sector = mddev->jc_sectors + (CBS_SIZE >> 8);
+				bio_add_page(bio, mem_ptr, PAGE_SIZE, 0);
+				atomic_set(&bio->dispatch_check, 0);
+				atomic_inc(&bi->dispatch_check);
+				atomic_inc(&bi->transfer_check);
+				atomic_inc(&rdev->nr_pending);
+				bio->obi = bi;
+				generic_make_request(bi);
+				
+				/* Issue Commit Block */
+				bio = bio_alloc_mddev(GFP_NOIO, 0, mddev);
+				bio->bi_bdev = rdev->bdev;
+				bio->bi_rw = WRITE_BARRIER;
+				bio->bi_end_io = raid5_end_cbs_request;
+				bio->bi_private = rdev;
+				bio->bi_sector = mddev->jc_sectors;
+				page_ptr = alloc_pages(GFP_NOIO, 0);
+				mem_ptr = (void*) page_address(page_ptr);
+				printk(KERN_INFO "(%s) Page Alloc : %p\n",__func__,mem_ptr);
+				memcpy(mem_ptr,page_address(bio_page(bi)),PAGE_SIZE);
+				bio_add_page(bio, mem_ptr, PAGE_SIZE, 0);
+				atomic_set(&bio->dispatch_check, 0);
+				atomic_inc(&bi->dispatch_check);
+				atomic_inc(&bi->transfer_check);
+				atomic_inc(&rdev->nr_pending);
+				atomic_inc(&rdev->nr_pending);
+				bio->obi = bi;
+				generic_make_request(bi);
+				rdev_dec_pending(rdev, conf->mddev);
+				
+				printk(KERN_INFO "(%s) bi : %p Transfer Count :%d\n"
+					,__func__, bi, atomic_read(&bi->transfer_check));
+			}
+		rcu_read_unlock();
+		mddev->jc_sectors += 8;
+		if (mddev->jc_sectors == mddev->dev_sectors + (CBS_SIZE >> 8)) {
+			mddev->jc_sectors = mddev->dev_sectors + 8;
+		}
+		
+		printk(KERN_INFO "(%s) Commit Block Request End bi : %p\n",__func__,bi);
 		return;
 	}
 
@@ -4584,7 +4698,7 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 		make_discard_request(mddev, bi);
 		return;
 	}
-
+	
 	logical_sector = bi->bi_sector & ~((sector_t)STRIPE_SECTORS-1);
 	last_sector = bio_end_sector(bi);
 	bi->bi_next = NULL;
@@ -4742,7 +4856,8 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 				
 				bi->raid_epoch = raid_epoch;
 				spin_lock(&bi->raid_epoch->raid_epoch_lock);
-				bi->raid_epoch->pending = (logical_sector - last_sector) / STRIPE_SECTORS;
+				bi->raid_epoch->pending = (logical_sector - last_sector) 
+								/ STRIPE_SECTORS;
 				atomic_inc(&bi->raid_epoch->e_count);
 				if (bi->bi_rw & REQ_BARRIER) {
 					bi->raid_epoch->barrier = 1;
