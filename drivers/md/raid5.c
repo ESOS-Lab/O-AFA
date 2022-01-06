@@ -2100,8 +2100,8 @@ void raid5_end_cbs_request(struct bio *bi, int error)
 	struct mddev *mddev = rdev->mddev;
 
         rdev_dec_pending(rdev, mddev);
-	printk(KERN_INFO "(%s) Free Page : %p\n",__func__,page_address(bio_page(bi)));
-	free_pages(page_address(bio_page(bi)), 0);
+	printk(KERN_INFO "(%s) Free Page : %p\n",__func__,bio_page(bi));
+	__free_page(bio_page(bi));
 				
 	printk(KERN_INFO "(%s) bi : %p Transfer Count :%d\n",__func__, bi->obi,
 		atomic_read(&bi->obi->transfer_check));
@@ -4618,26 +4618,27 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 		void *mem_ptr;
 		struct page *page_ptr;
 		struct cbs_payload *payload;
+		int ret;
 
-		dump_stack();
+		// printk(KERN_INFO "(%s) Commit Block Request Start bi : %p\n",__func__,bi);
 		
-		printk(KERN_INFO "(%s) Commit Block Request Start bi : %p\n",__func__,bi);
-		
+		atomic_set(&bi->dispatch_check, 0);
 		atomic_set(&bi->transfer_check, 0);
 		rcu_read_lock();
 		rdev_for_each_rcu(rdev, mddev)
 			if(rdev->raid_disk >= 0 &&
 				!test_bit(Faulty, &rdev->flags)) { 
-				/* Load Metadata to the page */
-				page_ptr = alloc_pages(GFP_NOIO, 0);
+				// Load Metadata to the page 
+				page_ptr = alloc_page(GFP_NOIO);
 				payload = page_address(page_ptr); 
+				clear_page(payload);
 				printk(KERN_INFO "(%s) Page Alloc : %p\n",__func__,payload);
 				payload->lba = cpu_to_le64(
 					(unsigned long long) bi->bi_sector); 
 				payload->r_sector = cpu_to_le64(
 					(unsigned long long) mddev->jc_sectors);
 				
-				/* Issue Metadata First */
+				// Issue Metadata First 
 				struct bio *bio;
 				bio = bio_alloc_mddev(GFP_NOIO, 0, mddev);
 				bio->bi_bdev = rdev->bdev;
@@ -4645,15 +4646,19 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 				bio->bi_end_io = raid5_end_cbs_request;
 				bio->bi_private = rdev;
 				bio->bi_sector = mddev->jc_sectors + (CBS_SIZE >> 8);
-				bio_add_page(bio, mem_ptr, PAGE_SIZE, 0);
+				ret = bio_add_page(bio, page_ptr, PAGE_SIZE, 0);
 				atomic_set(&bio->dispatch_check, 0);
 				atomic_inc(&bi->dispatch_check);
 				atomic_inc(&bi->transfer_check);
 				atomic_inc(&rdev->nr_pending);
 				bio->obi = bi;
-				generic_make_request(bi);
+				printk(KERN_INFO "(%s) ret : %d\n",__func__,ret);
+				printk(KERN_INFO "(%s) bi_size : %d\n",__func__,bio->bi_size);
+				printk(KERN_INFO "(%s) bio_idx : %p\n",__func__,bio->bi_idx);
+				printk(KERN_INFO "(%s) bio_page : %p\n",__func__,bio_page(bio));
+				generic_make_request(bio);
 				
-				/* Issue Commit Block */
+				// Issue Commit Block 
 				bio = bio_alloc_mddev(GFP_NOIO, 0, mddev);
 				bio->bi_bdev = rdev->bdev;
 				bio->bi_rw = WRITE_BARRIER;
@@ -4662,20 +4667,23 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 				bio->bi_sector = mddev->jc_sectors;
 				page_ptr = alloc_pages(GFP_NOIO, 0);
 				mem_ptr = (void*) page_address(page_ptr);
+				clear_page(mem_ptr);
 				printk(KERN_INFO "(%s) Page Alloc : %p\n",__func__,mem_ptr);
 				memcpy(mem_ptr,page_address(bio_page(bi)),PAGE_SIZE);
-				bio_add_page(bio, mem_ptr, PAGE_SIZE, 0);
+				bio_add_page(bio, page_ptr, PAGE_SIZE, 0);
 				atomic_set(&bio->dispatch_check, 0);
 				atomic_inc(&bi->dispatch_check);
 				atomic_inc(&bi->transfer_check);
 				atomic_inc(&rdev->nr_pending);
 				atomic_inc(&rdev->nr_pending);
 				bio->obi = bi;
-				generic_make_request(bi);
+				// printk(KERN_INFO "(%s) Alloc Page : %p\n",__func__
+				//	,bio_page(bio));
+				generic_make_request(bio);
 				rdev_dec_pending(rdev, conf->mddev);
 				
-				printk(KERN_INFO "(%s) bi : %p Transfer Count :%d\n"
-					,__func__, bi, atomic_read(&bi->transfer_check));
+				// printk(KERN_INFO "(%s) bi : %p Transfer Count :%d\n"
+				//	,__func__, bi, atomic_read(&bi->transfer_check));
 			}
 		rcu_read_unlock();
 		mddev->jc_sectors += 8;
@@ -4683,7 +4691,7 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 			mddev->jc_sectors = mddev->dev_sectors + 8;
 		}
 		
-		printk(KERN_INFO "(%s) Commit Block Request End bi : %p\n",__func__,bi);
+		// printk(KERN_INFO "(%s) Commit Block Request End bi : %p\n",__func__,bi);
 		return;
 	}
 

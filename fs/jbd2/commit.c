@@ -1755,7 +1755,6 @@ start_journal_io:
 				      JBD2_FEATURE_INCOMPAT_ASYNC_COMMIT)) {
 		err = journal_submit_commit_record(journal, commit_transaction,
 						 &cbh, crc32_sum);
-		printk(KERN_INFO "(%s) err : %d\n",__func__,err);
 		if (err)
 			__jbd2_journal_abort_hard(journal);
 	}
@@ -1857,7 +1856,6 @@ start_journal_io:
 				       JBD2_FEATURE_INCOMPAT_ASYNC_COMMIT)) {
 		err = journal_submit_commit_record(journal, commit_transaction,
 						&cbh, crc32_sum);
-		printk(KERN_INFO "(%s) err : %d\n",__func__,err);
 		if (err)
 			__jbd2_journal_abort_hard(journal);
 	}

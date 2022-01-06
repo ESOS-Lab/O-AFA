@@ -613,8 +613,9 @@ static int __bio_add_page(struct request_queue *q, struct bio *bio, struct page
 	if (unlikely(bio_flagged(bio, BIO_CLONED)))
 		return 0;
 
-	if (((bio->bi_size + len) >> 9) > max_sectors)
+	if (((bio->bi_size + len) >> 9) > max_sectors) {
 		return 0;
+	}
 
 	/*
 	 * For filesystems with a blocksize smaller than the pagesize
