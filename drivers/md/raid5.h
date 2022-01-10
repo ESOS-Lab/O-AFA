@@ -534,5 +534,6 @@ extern int raid5_set_cache_size(struct mddev *mddev, int size);
 extern void raid5_end_write_request(struct bio *bi, int error);
 extern void raid5_end_dbarrier_request(struct bio *bi, int error);
 extern void raid5_end_cbs_request(struct bio *bi, int error);
+extern void raid5_end_cbs_read(struct bio *bi, int error);
 extern void raid5_barrier_request (struct work_struct *ws);
 #endif

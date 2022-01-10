@@ -1726,7 +1726,7 @@ static int super_1_validate(struct mddev *mddev, struct md_rdev *rdev)
 		mddev->layout = le32_to_cpu(sb->layout);
 		mddev->raid_disks = le32_to_cpu(sb->raid_disks);
 		mddev->dev_sectors = le64_to_cpu(sb->size);
-		printk(KERN_INFO "(%s) dev_sectors : %d\n",__func__,mddev->dev_sectors);
+		printk(KERN_INFO "(%s) dev_sectors : %llx\n",__func__,mddev->dev_sectors);
 		mddev->jc_sectors = mddev->dev_sectors + 8;/* SW Modified */
 		mddev->events = ev1;
 		mddev->bitmap_info.offset = 0;
@@ -3482,30 +3482,69 @@ static void analyze_sbs(struct mddev * mddev)
 
 static void analyze_cbs (struct mddev *mddev)
 {
-	/*
-	struct bio *bio = bio_alloc_mddev(GFP_NOIO, 1, mddev);
+	struct bio *bio;
+	struct bio_vec *bvl;
 	struct completion event;
-	int ret;
+	int i, pos, ret;
+	unsigned long long rw;
 	
-	struct page *page_ptr;
-	struct void *mem_ptr;
+	struct page *page_ptr, *bio_page;
+	void *mem_ptr;
+	struct cbs_payload *payload;
+	struct md_rdev *rdev;
 
 	rw = READ | REQ_SYNC;
 
-	bio->bi_bdev = rdev->bdev;
-	bio->bi_sector = mddev->dev_sectors;
-	if(!bio_add_page(bio, page, (CBS_SIZE << 1), 0))
-		return -EIO;
-	init_completion(&event);
-	bio->bi_private = &event;
-	bio->bi_end_io = bi_complete;
-	submit_bio(rw, bio);
-	wait_for_completion(&event);
+	rdev_for_each(rdev, mddev)
+		if (test_bit(In_sync, &rdev->flags)) {
+			struct request_queue *q = bdev_get_queue(rdev->bdev);
+			unsigned int max_sectors = queue_max_sectors(q);
+			unsigned int max_pages = max_sectors >> 3;	
+			for (i = 0; i < CBS_SIZE_PAGE / max_pages; i++) {
+				bio = bio_alloc_mddev(GFP_NOIO, max_pages, mddev);
+				init_completion(&event);
+				bio->bi_bdev = rdev->bdev;
+				bio->bi_sector = mddev->jc_sectors 
+						+ i * ((max_pages << PAGE_SHIFT) 
+						>> 9);
+				bio->bi_private = &event;
+				bio->bi_end_io = bi_complete;
+				page_ptr = alloc_pages(GFP_NOIO, 
+					ilog2(max_pages));
+				ret = bio_add_page(bio, page_ptr, max_pages << PAGE_CACHE_SHIFT, 0);
+				bio_get(bio);
+				submit_bio(rw, bio);
 
-	ret = test_bit(BIO_UPTODATE, &bio->bi_flags);
-	bio_put(bio);
-	return ret;
-	*/
+				wait_for_completion(&event);
+				ret = test_bit(BIO_UPTODATE, &bio->bi_flags);
+				
+				if (!ret) {
+					bio_for_each_segment(bvl, bio, i) {
+						bio_page = bvl->bv_page;	
+						payload = page_address(bio_page);
+						pos = (le64_to_cpu(payload->r_sector) - mddev->dev_sectors - 8) 
+							>> 3;
+						if (!mddev->cbs_mapping[pos])
+							mddev->cbs_mapping[pos] = le64_to_cpu(payload->lba);
+						else if (mddev->cbs_mapping[pos] != le64_to_cpu(payload->lba)) {
+							printk(KERN_ERR "(%s) Crash at %llu,%llu\n"
+									,__func__
+									,le64_to_cpu(payload->lba)
+									,le64_to_cpu(payload->r_sector));
+						}
+					}
+				}
+					
+				__free_pages(page_ptr,ilog2(max_pages));
+				bio_put(bio);
+				if (!ret) {
+					printk(KERN_ERR "(%s) Metadata Read Error!\n",__func__);
+					return;
+				}
+			}
+		}
+
+	return ;
 }
 
 /* Read a fixed-point number.
@@ -5111,6 +5150,7 @@ int md_run(struct mddev *mddev)
 		if (!mddev->persistent)
 			return -EINVAL;
 		analyze_sbs(mddev);
+		analyze_cbs(mddev);
 	}
 
 	if (mddev->level != LEVEL_NONE)

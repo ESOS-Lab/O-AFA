@@ -696,6 +696,7 @@ static int __bio_add_page(struct request_queue *q, struct bio *bio, struct page
 		 * at this offset
 		 */
 		if (q->merge_bvec_fn(q, &bvm, bvec) < bvec->bv_len) {
+			printk(KERN_INFO "(%s) Clear Bvec\n",__func__);
 			bvec->bv_page = NULL;
 			bvec->bv_len = 0;
 			bvec->bv_offset = 0;

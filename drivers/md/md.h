@@ -23,6 +23,7 @@
 #include <linux/timer.h>
 #include <linux/wait.h>
 #include <linux/workqueue.h>
+#include <linux/log2.h>
 
 #define MaxSector (~(sector_t)0)
 
@@ -33,10 +34,18 @@
  */
 #define MD_MAX_BADBLOCKS	(PAGE_SIZE/8)
 
-#define CBS_SIZE (1ULL << 18) /* SW Modified */
+#define CBS_TOTAL_SIZE (1ULL << 19) /* SW Modified : 256 MiB in sectors 128 MiB for Metadata Area 128 MiB for Commit Block Stripe*/
+				/* 256 * 2^20 = 2^28 (256 MiB) / 2^9 (512 Byte) = 2^19 Sectors*/
+#define CBS_SIZE_PAGE (1ULL << 15) /* SW Modified CBS Size in unit of Page*/
 /*
  * MD's 'extended' device
  */
+
+struct cbs_payload { /* SW Modified */                                      
+        __le64 lba;                  
+        __le64 r_sector;        
+} __attribute__ ((__packed__));                                           
+
 struct md_rdev {
 	struct list_head same_set;	/* RAID devices within the same set */
 
@@ -52,7 +61,9 @@ struct md_rdev {
 	struct block_device *meta_bdev;
 	struct block_device *bdev;	/* block device handle */
 
-	struct page	*sb_page, *bb_page;
+	struct bio 	*cb_bio;
+
+	struct page	*sb_page, *bb_page, *cb_page;
 	int		sb_loaded;
 	__u64		sb_events;
 	sector_t	data_offset;	/* start of data in array */
@@ -437,7 +448,7 @@ struct mddev {
 
 	/* SW Modified */
 	mempool_t			*raid_epoch_pool;
-	int 				cbs_mapping[CBS_SIZE >> 8];
+	int 				cbs_mapping[CBS_SIZE_PAGE];
 };
 
 /* SW Modified */

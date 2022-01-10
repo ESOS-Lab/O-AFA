@@ -902,9 +902,6 @@ static int sd_prep_fn(struct request_queue *q, struct request *rq)
 	} else if (rq->cmd_flags & REQ_FLUSH) {
 		ret = scsi_setup_flush_cmnd(sdp, rq);
 		goto out;
-	} else if (!rq->nr_phys_segments && rq->cmd_bflags & REQ_ORDERED) {
-		ret = BLKPREP_KILL;
-		goto out;
 	} else if (!rq->nr_phys_segments && rq->cmd_bflags & REQ_BARRIER) {
 		ret = scsi_setup_dbarrier_cmnd(sdp, rq);
 		goto out;
@@ -912,6 +909,9 @@ static int sd_prep_fn(struct request_queue *q, struct request *rq)
 		ret = scsi_setup_blk_pc_cmnd(sdp, rq);
 		goto out;
 	} else if (rq->cmd_type != REQ_TYPE_FS) {
+		ret = BLKPREP_KILL;
+		goto out;
+	} else if (!rq->nr_phys_segments) {
 		ret = BLKPREP_KILL;
 		goto out;
 	}
