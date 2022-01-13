@@ -89,6 +89,8 @@ struct bio {
 	atomic_t		dispatch_check; /* SW Modified */
 	atomic_t		transfer_check; /* SW Modified */
 	struct bio		*obi;		/* SW Modified */
+	spinlock_t		read_list_lock;
+	struct list_head	read_page_list;
 
 	struct bio_vec		*bi_io_vec;	/* the actual vec list */
 

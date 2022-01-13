@@ -3485,7 +3485,7 @@ static void analyze_cbs (struct mddev *mddev)
 	struct bio *bio;
 	struct bio_vec *bvl;
 	struct completion event;
-	int i, pos, ret;
+	int i, k, pos, ret;
 	unsigned long long rw;
 	
 	struct page *page_ptr, *bio_page;
@@ -3518,19 +3518,19 @@ static void analyze_cbs (struct mddev *mddev)
 				wait_for_completion(&event);
 				ret = test_bit(BIO_UPTODATE, &bio->bi_flags);
 				
-				if (!ret) {
-					bio_for_each_segment(bvl, bio, i) {
-						bio_page = bvl->bv_page;	
-						payload = page_address(bio_page);
-						pos = (le64_to_cpu(payload->r_sector) - mddev->dev_sectors - 8) 
-							>> 3;
-						if (!mddev->cbs_mapping[pos])
-							mddev->cbs_mapping[pos] = le64_to_cpu(payload->lba);
-						else if (mddev->cbs_mapping[pos] != le64_to_cpu(payload->lba)) {
-							printk(KERN_ERR "(%s) Crash at %llu,%llu\n"
-									,__func__
-									,le64_to_cpu(payload->lba)
-									,le64_to_cpu(payload->r_sector));
+				if (ret) {
+					mem_ptr = page_address(page_ptr);
+					for (k = 0; k < max_pages; k++) {
+						payload = mem_ptr + k * PAGE_SIZE;
+						if (!mddev->cbs_mapping[i * max_pages + k])
+							mddev->cbs_mapping[i * max_pages + k] = le64_to_cpu(payload->lba);
+						else if (mddev->cbs_mapping[i * max_pages + k] != le64_to_cpu(payload->lba)) {
+							mddev->cbs_crash[i * max_pages + k] = 1;
+							// printk(KERN_ERR "(%s) Idx : %d Crash at %llu,%llu\n"
+							//	,__func__
+							//	,i * max_pages + k
+							//	,le64_to_cpu(payload->lba)
+							//	,le64_to_cpu(payload->r_sector));
 						}
 					}
 				}

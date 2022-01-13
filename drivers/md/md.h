@@ -449,6 +449,7 @@ struct mddev {
 	/* SW Modified */
 	mempool_t			*raid_epoch_pool;
 	int 				cbs_mapping[CBS_SIZE_PAGE];
+	int				cbs_crash[CBS_SIZE_PAGE];
 };
 
 /* SW Modified */

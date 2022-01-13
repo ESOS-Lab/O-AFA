@@ -585,6 +585,7 @@ static struct scsi_cmnd *scsi_end_request(struct scsi_cmnd *cmd, int error,
 		}
 		else {
 			if (requeue) {
+			
 				/*
 				 * Bleah.  Leftovers again.  Stick the
 				 * leftovers in the front of the
@@ -793,8 +794,9 @@ void scsi_io_completion(struct scsi_cmnd *cmd, unsigned int good_bytes)
 				memcpy(req->sense, cmd->sense_buffer,  len);
 				req->sense_len = len;
 			}
-			if (!sense_deferred)
+			if (!sense_deferred) {
 				error = __scsi_error_from_host_byte(cmd, result);
+			}
 		}
 		/*
 		 * __scsi_error_from_host_byte may have reset the host_byte
