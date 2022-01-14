@@ -1319,8 +1319,17 @@ ops_run_prexor(struct stripe_head *sh, struct raid5_percpu *percpu,
 static void __raid_request_dispatched(struct bio *bio)
 {
 	int i;
+	struct raid_epoch *raid_epoch = bio->raid_epoch;
 	
 	if (atomic_dec_and_test(&bio->dispatch_check)) {
+                if (raid_epoch && atomic_dec_and_test(&raid_epoch->e_count)) {
+                        //printk(KERN_INFO "(%s) PID : %d "        
+                        //              "Free RAID EPOCH : %p\n"        
+                        //      ,__func__,raid_epoch->pid 
+                        //      ,raid_epoch);                        
+                        mempool_free(bio->raid_epoch, bio->raid_epoch->mddev->raid_epoch_pool);
+                        bio->raid_epoch = NULL;
+                }
 		trace_block_bio_dispatch(bio);
 		for (i = 0; i < bio->bi_vcnt; i++) {
 			struct bio_vec *bvec = &bio->bi_io_vec[i];
@@ -1365,16 +1374,6 @@ void raid_request_dispatched(struct request *req)
 		sh = bio->bi_private;
 		if (!atomic_cmpxchg(&bio->dispatch_check, 0, 1)
 			&& atomic_dec_and_test(&sh->dispatch_count)) {
-			struct raid_epoch *raid_epoch = bio->raid_epoch;
-			if (raid_epoch && atomic_dec_and_test(&raid_epoch->e_count)) {
-                		//printk(KERN_INFO "(%s) PID : %d "        
-                		//              "Free RAID EPOCH : %p\n"        
-        			//	,__func__,raid_epoch->pid 
-        			//	,raid_epoch);                        
-				mempool_free(bio->raid_epoch, 
-					sh->raid_conf->mddev->raid_epoch_pool);
-				bio->raid_epoch = NULL;
-			}
 			for (i = sh->disks; i--;) {
 				if (sh->dev[i].written) {
                                 	dev = &sh->dev[i];
@@ -2117,18 +2116,14 @@ void raid5_end_cbs_request(struct bio *bi, int error)
 	struct md_rdev *rdev = bi->bi_private;
 	struct mddev *mddev = rdev->mddev;
 
-        rdev_dec_pending(rdev, mddev);
-	//printk(KERN_INFO "(%s) bi : %p idx : %d Transfer Count :%d\n",__func__, bi
-	//	,bi->bi_idx
-	//	,atomic_read(&bi->obi->transfer_check));
-	//printk(KERN_INFO "(%s) Free Page : %p\n",__func__,bio_iovec_idx(bi,0)->bv_page);
-	__free_page(bio_iovec_idx(bi,0)->bv_page);
-				
-     	if (atomic_dec_and_test(&bi->obi->transfer_check)) {              
+     	if (atomic_dec_and_test(&bi->obi->transfer_check)) { 
+		__free_page(bio_iovec_idx(bi->obi->obi, 0)->bv_page);
+		bio_put(bi->obi->obi);
 		bio_endio(bi->obi, 0);	
         }
 	
 	bio_put(bi);
+        rdev_dec_pending(rdev, mddev);
         return;
 	
 }
@@ -2161,9 +2156,12 @@ void raid5_end_cbs_read(struct bio *bi, int error)
 				
 		list_for_each_safe(ptr, ptrn, &bi->obi->read_page_list) {
 			bio = list_entry(ptr, struct bio, read_page_list);
+			if (bio == bi->obi) {
+				continue;
+			}
 			list_del_init(&bio->read_page_list);
 			__free_page(bio_iovec_idx(bi,0)->bv_page);
-			bio_put(bi);
+			bio_put(bio);
 		}
         }
 
@@ -2248,15 +2246,6 @@ void raid5_end_write_request(struct bio *bi, int error)
 
 	if (!atomic_cmpxchg(&bi->dispatch_check, 0, 1)                     
         	&& atomic_dec_and_test(&sh->dispatch_count)) {              
-		struct raid_epoch *raid_epoch = bi->raid_epoch;
-		if (raid_epoch && atomic_dec_and_test(&raid_epoch->e_count)) {
-                	//printk(KERN_INFO "(%s) PID : %d "        
-                	//              "Free RAID EPOCH : %p\n"        
-        		//	,__func__,raid_epoch->pid 
-        		//	,raid_epoch);                        
-			mempool_free(bi->raid_epoch, mddev->raid_epoch_pool);
-			bi->raid_epoch = NULL;
-		}
         	for (i = sh->disks; i--;) {                                 
         	        if (sh->dev[i].written) {                           
 				dev = &sh->dev[i];
@@ -4673,7 +4662,8 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 		return;
 	}
 
-	if (unlikely(rw == READ && bi->bi_size == PAGE_SIZE)) {
+	/*
+	if (unlikely(rw == READ && bi->bi_rw == REQ_COMMIT)) {
 		for (i = 0; i < CBS_SIZE_PAGE; i++) {
 			if (bi->bi_sector == mddev->cbs_mapping[i]) {
 				if (mddev->cbs_crash[i]) {
@@ -4685,6 +4675,9 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 				rdev_for_each_rcu(rdev, mddev)
 					if(rdev->raid_disk >= 0 &&
 						!test_bit(Faulty, &rdev->flags)) { 
+						atomic_inc(&rdev->nr_pending);
+						atomic_inc(&rdev->nr_pending);
+						rcu_read_unlock();
 						page_ptr = alloc_page(GFP_NOIO);
 						cb_bio = bio_alloc_mddev(GFP_NOIO, 1, mddev);
 						INIT_LIST_HEAD(&cb_bio->read_page_list);
@@ -4700,9 +4693,8 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 						bio_add_page(cb_bio
 							,page_ptr, PAGE_SIZE, 0);
 						atomic_inc(&bi->transfer_check);
-						atomic_inc(&rdev->nr_pending);
-						atomic_inc(&rdev->nr_pending);
 						generic_make_request(cb_bio);
+						rcu_read_lock();
 						rdev_dec_pending(rdev, conf->mddev);
 				}
 				rcu_read_unlock();
@@ -4711,91 +4703,82 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 		}	
 		return;
 	}
+	*/
 
-	if (unlikely(bi->bi_rw & REQ_COMMIT)) { 
+	if (unlikely(rw == WRITE && bi->bi_rw & (REQ_BARRIER | REQ_COMMIT))) { 
 		void *mem_ptr;
 		struct page *page_ptr;
 		struct cbs_payload *payload;
 		int ret, pos;
+		struct bio *meta_bio;
 
-		// printk(KERN_INFO "(%s) Commit Block Request Start bi : %p\n",__func__,bi);
-		
+		// Set Metadata Page 
+		page_ptr = alloc_page(GFP_NOIO);
+		payload = page_address(page_ptr); 
+		clear_page(payload);
+		payload->lba = cpu_to_le64(
+			(unsigned long long) bi->bi_sector); 
+		payload->r_sector = cpu_to_le64(
+			(unsigned long long) mddev->jc_sectors);
+		pos = (mddev->jc_sectors - mddev->dev_sectors - 8) >> 3;
+		mddev->cbs_mapping[pos] = bi->bi_sector;
+		meta_bio = bio_alloc_mddev(GFP_NOIO, 1, mddev);
+		meta_bio->bi_rw = WRITE_ORDERED;
+		rcu_read_lock();
+		rdev_for_each_rcu(rdev, mddev)
+			if(rdev->raid_disk >= 0 &&
+				!test_bit(Faulty, &rdev->flags)) {
+				meta_bio->bi_bdev = rdev->bdev;
+				break;
+			}
+		rcu_read_unlock();
+		ret = bio_add_page(meta_bio, page_ptr, PAGE_SIZE, 0);
+		bi->obi = meta_bio;	
 		atomic_set(&bi->dispatch_check, 0);
 		atomic_set(&bi->transfer_check, 0);
 		rcu_read_lock();
 		rdev_for_each_rcu(rdev, mddev)
 			if(rdev->raid_disk >= 0 &&
 				!test_bit(Faulty, &rdev->flags)) { 
-				// Load Metadata to the page 
-				page_ptr = alloc_page(GFP_NOIO);
-				payload = page_address(page_ptr); 
-				clear_page(payload);
-				// printk(KERN_INFO "(%s) Page Alloc : %p\n",__func__,payload);
-				// printk(KERN_INFO "(%s) Redirect Sect %llu to %llu\n"
-				//			,__func__,bi->bi_sector
-				//			,mddev->jc_sectors);
-				payload->lba = cpu_to_le64(
-					(unsigned long long) bi->bi_sector); 
-				payload->r_sector = cpu_to_le64(
-					(unsigned long long) mddev->jc_sectors);
-				
-				pos = (mddev->jc_sectors - mddev->dev_sectors - 8) >> 3;
-				mddev->cbs_mapping[pos] = bi->bi_sector;
+				atomic_inc(&rdev->nr_pending);
+				atomic_inc(&rdev->nr_pending);
+				atomic_inc(&rdev->nr_pending);
+				rcu_read_unlock();
 	
 				// Issue Metadata First 
 				struct bio *bio;
-				bio = bio_alloc_mddev(GFP_NOIO, 1, mddev);
+				bio = bio_clone_mddev(meta_bio, GFP_NOIO, mddev);
 				bio->bi_bdev = rdev->bdev;
-				bio->bi_rw = WRITE_ORDERED;
 				bio->bi_end_io = raid5_end_cbs_request;
 				bio->bi_private = rdev;
-				bio->bi_sector = mddev->jc_sectors;
-				ret = bio_add_page(bio, page_ptr, PAGE_SIZE, 0);
+				bio->bi_sector = mddev->jc_sectors + rdev->data_offset;
 				atomic_set(&bio->dispatch_check, 0);
 				atomic_inc(&bi->dispatch_check);
 				atomic_inc(&bi->transfer_check);
-				atomic_inc(&rdev->nr_pending);
 				bio->obi = bi;
-				// printk(KERN_INFO "(%s) bio : %p meta idx : %d page : %p\n"
-				//		,__func__,bio,bio->bi_idx,bio_page(bio));
 				generic_make_request(bio);
 				
 				// Issue Commit Block 
-				bio = bio_alloc_mddev(GFP_NOIO, 1, mddev);
+				bio = bio_clone_mddev(bi, GFP_NOIO, mddev);
 				bio->bi_bdev = rdev->bdev;
 				bio->bi_rw = WRITE_BARRIER;
 				bio->bi_end_io = raid5_end_cbs_request;
 				bio->bi_private = rdev;
-				bio->bi_sector = mddev->jc_sectors + (CBS_TOTAL_SIZE >> 10);
-				page_ptr = alloc_pages(GFP_NOIO, 0);
-				mem_ptr = (void*) page_address(page_ptr);
-				clear_page(mem_ptr);
-				// printk(KERN_INFO "(%s) Page Alloc : %p\n",__func__,page_ptr);
-				memcpy(mem_ptr,page_address(bio_page(bi)),PAGE_SIZE);
-				bio_add_page(bio, page_ptr, PAGE_SIZE, 0);
+				bio->bi_sector = mddev->jc_sectors + (CBS_TOTAL_SIZE >> 10)
+							+ rdev->data_offset;
 				atomic_set(&bio->dispatch_check, 0);
 				atomic_inc(&bi->dispatch_check);
 				atomic_inc(&bi->transfer_check);
-				atomic_inc(&rdev->nr_pending);
-				atomic_inc(&rdev->nr_pending);
 				bio->obi = bi;
-				// printk(KERN_INFO "(%s) Alloc Page : %p\n",__func__
-				//	,bio_page(bio));
-				// printk(KERN_INFO "(%s) bio : %p redi idx : %d page : %p\n"
-				//		,__func__,bio,bio->bi_idx,bio_page(bio));
 				generic_make_request(bio);
+				rcu_read_lock();
 				rdev_dec_pending(rdev, conf->mddev);
-				
-				// printk(KERN_INFO "(%s) bi : %p Transfer Count :%d\n"
-				//	,__func__, bi, atomic_read(&bi->transfer_check));
 			}
 		rcu_read_unlock();
 		mddev->jc_sectors += 8;
 		if (mddev->jc_sectors == mddev->dev_sectors + (CBS_TOTAL_SIZE >> 10)) {
 			mddev->jc_sectors = mddev->dev_sectors + 8;
 		}
-		
-		// printk(KERN_INFO "(%s) Commit Block Request End bi : %p\n",__func__,bi);
 		return;
 	}
 

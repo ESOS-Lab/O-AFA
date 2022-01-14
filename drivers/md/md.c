@@ -3504,7 +3504,7 @@ static void analyze_cbs (struct mddev *mddev)
 				bio = bio_alloc_mddev(GFP_NOIO, max_pages, mddev);
 				init_completion(&event);
 				bio->bi_bdev = rdev->bdev;
-				bio->bi_sector = mddev->jc_sectors 
+				bio->bi_sector = rdev->data_offset + mddev->jc_sectors 
 						+ i * ((max_pages << PAGE_SHIFT) 
 						>> 9);
 				bio->bi_private = &event;

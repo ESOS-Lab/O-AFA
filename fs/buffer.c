@@ -3175,7 +3175,7 @@ EXPORT_SYMBOL(submit_bh64);
  * All of the buffers must be for the same device, and must also be a
  * multiple of the current approved size for the device.
  */
-void ll_rw_block(int rw, int nr, struct buffer_head *bhs[])
+void ll_rw_block(long long rw, int nr, struct buffer_head *bhs[])
 {
 	int i;
 
@@ -3188,14 +3188,14 @@ void ll_rw_block(int rw, int nr, struct buffer_head *bhs[])
 			if (test_clear_buffer_dirty(bh)) {
 				bh->b_end_io = end_buffer_write_sync;
 				get_bh(bh);
-				submit_bh(WRITE, bh);
+				submit_bh64(WRITE, bh);
 				continue;
 			}
 		} else {
 			if (!buffer_uptodate(bh)) {
 				bh->b_end_io = end_buffer_read_sync;
 				get_bh(bh);
-				submit_bh(rw, bh);
+				submit_bh64(rw, bh);
 				continue;
 			}
 		}
