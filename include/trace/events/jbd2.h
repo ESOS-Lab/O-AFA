@@ -112,6 +112,102 @@ TRACE_EVENT(jbd2_end_commit,
 		  __entry->transaction, __entry->sync_commit, __entry->head)
 );
 
+TRACE_EVENT(jbd2_issue_commit_record,
+	TP_PROTO(journal_t *journal, transaction_t *commit_transaction),
+
+	TP_ARGS(journal, commit_transaction),
+
+	TP_STRUCT__entry(
+		__field(	dev_t,	dev			)
+		__field(	char,	sync_commit		  )
+		__field(	int,	transaction		  )
+		__field(	int,	head		  	  )
+	),
+
+	TP_fast_assign(
+		__entry->dev		= journal->j_fs_dev->bd_dev;
+		__entry->sync_commit = commit_transaction->t_synchronous_commit;
+		__entry->transaction	= commit_transaction->t_tid;
+		__entry->head		= journal->j_tail_sequence;
+	),
+
+	TP_printk("dev %d,%d transaction %d sync %d head %d",
+		  MAJOR(__entry->dev), MINOR(__entry->dev),
+		  __entry->transaction, __entry->sync_commit, __entry->head)
+);
+
+TRACE_EVENT(jbd2_dispatch_commit_record,
+	TP_PROTO(journal_t *journal, transaction_t *commit_transaction),
+
+	TP_ARGS(journal, commit_transaction),
+
+	TP_STRUCT__entry(
+		__field(	dev_t,	dev			)
+		__field(	char,	sync_commit		  )
+		__field(	int,	transaction		  )
+		__field(	int,	head		  	  )
+	),
+
+	TP_fast_assign(
+		__entry->dev		= journal->j_fs_dev->bd_dev;
+		__entry->sync_commit = commit_transaction->t_synchronous_commit;
+		__entry->transaction	= commit_transaction->t_tid;
+		__entry->head		= journal->j_tail_sequence;
+	),
+
+	TP_printk("dev %d,%d transaction %d sync %d head %d",
+		  MAJOR(__entry->dev), MINOR(__entry->dev),
+		  __entry->transaction, __entry->sync_commit, __entry->head)
+);
+
+TRACE_EVENT(jbd2_transfer_commit_record,
+	TP_PROTO(journal_t *journal, transaction_t *commit_transaction),
+
+	TP_ARGS(journal, commit_transaction),
+
+	TP_STRUCT__entry(
+		__field(	dev_t,	dev			)
+		__field(	char,	sync_commit		  )
+		__field(	int,	transaction		  )
+		__field(	int,	head		  	  )
+	),
+
+	TP_fast_assign(
+		__entry->dev		= journal->j_fs_dev->bd_dev;
+		__entry->sync_commit = commit_transaction->t_synchronous_commit;
+		__entry->transaction	= commit_transaction->t_tid;
+		__entry->head		= journal->j_tail_sequence;
+	),
+
+	TP_printk("dev %d,%d transaction %d sync %d head %d",
+		  MAJOR(__entry->dev), MINOR(__entry->dev),
+		  __entry->transaction, __entry->sync_commit, __entry->head)
+);
+
+TRACE_EVENT(jbd2_durable_commit_record,
+	TP_PROTO(journal_t *journal, transaction_t *commit_transaction),
+
+	TP_ARGS(journal, commit_transaction),
+
+	TP_STRUCT__entry(
+		__field(	dev_t,	dev			)
+		__field(	char,	sync_commit		  )
+		__field(	int,	transaction		  )
+		__field(	int,	head		  	  )
+	),
+
+	TP_fast_assign(
+		__entry->dev		= journal->j_fs_dev->bd_dev;
+		__entry->sync_commit = commit_transaction->t_synchronous_commit;
+		__entry->transaction	= commit_transaction->t_tid;
+		__entry->head		= journal->j_tail_sequence;
+	),
+
+	TP_printk("dev %d,%d transaction %d sync %d head %d",
+		  MAJOR(__entry->dev), MINOR(__entry->dev),
+		  __entry->transaction, __entry->sync_commit, __entry->head)
+);
+
 TRACE_EVENT(jbd2_submit_inode_data,
 	TP_PROTO(struct inode *inode),
 

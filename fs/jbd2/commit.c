@@ -227,6 +227,8 @@ static int journal_submit_commit_record(journal_t *journal,
 	bh->b_end_io = journal_end_commit_record_io_async;
 	commit_transaction->cbh = bh;
 
+	trace_jbd2_issue_commit_record(journal, commit_transaction);
+
 	if (journal->j_flags & JBD2_BARRIER && !JBD2_HAS_INCOMPAT_FEATURE(journal, JBD2_FEATURE_INCOMPAT_ASYNC_COMMIT))
 #ifdef UFSBARRIER
 		ret = submit_bh64(WRITE_BARRIER | REQ_COMMIT, bh);
@@ -1862,6 +1864,9 @@ start_journal_io:
 
 	if (cbh)
 		err = journal_dispatch_on_commit_record(journal, cbh);
+	
+	trace_jbd2_dispatch_commit_record(journal, commit_transaction);
+	
 	/*
 	 * Now disk caches for filesystem device are flushed so we are safe to
 	 * erase checkpointed transactions from the log by updating journal
@@ -2029,6 +2034,7 @@ void jbd2_journal_cpsetup_transaction(journal_t *journal)
 
 	if (commit_transaction->cbh) {
 		wait_on_buffer(commit_transaction->cbh);	  
+		trace_jbd2_transfer_commit_record(journal, commit_transaction);
 		if (unlikely(!buffer_uptodate(commit_transaction->cbh)))
 			err = -EIO;
 		put_bh(commit_transaction->cbh);            /* One for getblk() */
@@ -2036,6 +2042,7 @@ void jbd2_journal_cpsetup_transaction(journal_t *journal)
 
 	if (commit_transaction->t_flush_trigger) {
 		blkdev_issue_flush(journal->j_dev, GFP_NOFS, NULL);
+		trace_jbd2_durable_commit_record(journal, commit_transaction);
 	}
 	if (err)
 		jbd2_journal_abort(journal, err);

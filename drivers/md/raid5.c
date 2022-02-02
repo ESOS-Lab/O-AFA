@@ -200,7 +200,7 @@ static void return_io(struct bio *return_bi)
 		return_bi = bi->bi_next;
 		bi->bi_next = NULL;
 		bi->bi_size = 0;
-		trace_block_bio_complete(bdev_get_queue(bi->bi_bdev),
+			trace_block_bio_complete(bdev_get_queue(bi->bi_bdev),
 					 bi, 0);
 		bio_endio(bi, 0);
 		bi = return_bi;
@@ -588,7 +588,7 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 						}
 						
 					}	
-					//printk(KERN_INFO "Pending : %d, Count : %d\n",
+					// printk(KERN_INFO "Pending : %d, Count : %d\n",
 					//			raid_epoch->pending, count);
 					if (raid_epoch->pending == count) {
 						barrier = true;
@@ -1330,7 +1330,8 @@ static void __raid_request_dispatched(struct bio *bio)
                         mempool_free(bio->raid_epoch, bio->raid_epoch->mddev->raid_epoch_pool);
                         bio->raid_epoch = NULL;
                 }
-		trace_block_bio_dispatch(bio);
+		//if (bio->bi_rw & REQ_COMMIT)
+		//	trace_block_bio_dispatch(bio);
 		for (i = 0; i < bio->bi_vcnt; i++) {
 			struct bio_vec *bvec = &bio->bi_io_vec[i];
 			struct page *page = bvec->bv_page;
@@ -1356,6 +1357,7 @@ void raid_request_dispatched(struct request *req)
 	
 		if (bio->bi_end_io == raid5_end_cbs_request) {
 			if (atomic_dec_and_test(&bio->obi->dispatch_check)) {
+        			trace_block_bio_dispatch(bio);   
 				for (i = 0; i < bio->obi->bi_vcnt; i++) {
         				struct bio_vec *bvec = &bio->obi->bi_io_vec[i];
         				struct page *page = bvec->bv_page;
@@ -1457,6 +1459,9 @@ static void ops_complete_reconstruct(void *stripe_head_ref)
 		struct r5dev *dev = &sh->dev[i];
 
 		if (dev->written || i == pd_idx || i == qd_idx) {
+			if (dev->written) {
+				trace_block_bio_xor_complete(dev->written);
+			}
 			if (!discard)
 				set_bit(R5_UPTODATE, &dev->flags);
 			if (fua)
@@ -2102,6 +2107,8 @@ void raid5_end_dbarrier_request(struct bio *bi, int error)
 		}
         }
 	
+	// printk(KERN_INFO "(%s) Idx : %d",__func__,bi->raid_disk_num);
+	
 	set_bit(STRIPE_HANDLE, &sh->state);
 	release_stripe(sh);
 
@@ -2119,6 +2126,8 @@ void raid5_end_cbs_request(struct bio *bi, int error)
      	if (atomic_dec_and_test(&bi->obi->transfer_check)) { 
 		__free_page(bio_iovec_idx(bi->obi->obi, 0)->bv_page);
 		bio_put(bi->obi->obi);
+        	trace_block_bio_complete(bdev_get_queue(bi->bi_bdev),
+                         	bi, 0);
 		bio_endio(bi->obi, 0);	
         }
 	
@@ -2664,6 +2673,7 @@ schedule_reconstruction(struct stripe_head *sh, struct stripe_head_state *s,
 				if (!expand)
 					clear_bit(R5_UPTODATE, &dev->flags);
 				s->locked++;
+				trace_block_bio_read_complete(dev->towrite);
 			}
 		}
 		/* if we are not expanding this is a proper write request, and
@@ -4662,7 +4672,6 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 		return;
 	}
 
-	/*
 	if (unlikely(rw == READ && bi->bi_rw == REQ_COMMIT)) {
 		for (i = 0; i < CBS_SIZE_PAGE; i++) {
 			if (bi->bi_sector == mddev->cbs_mapping[i]) {
@@ -4703,14 +4712,16 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 		}	
 		return;
 	}
-	*/
 
-	if (unlikely(rw == WRITE && bi->bi_rw & (REQ_BARRIER | REQ_COMMIT))) { 
+	/*
+	if (unlikely(rw == WRITE && bi->bi_rw & REQ_COMMIT)) { 
 		void *mem_ptr;
 		struct page *page_ptr;
 		struct cbs_payload *payload;
 		int ret, pos;
 		struct bio *meta_bio;
+	
+		trace_block_bio_raid_queue(bi);
 
 		// Set Metadata Page 
 		page_ptr = alloc_page(GFP_NOIO);
@@ -4736,7 +4747,6 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 		bi->obi = meta_bio;	
 		atomic_set(&bi->dispatch_check, 0);
 		atomic_set(&bi->transfer_check, 0);
-		rcu_read_lock();
 		rdev_for_each_rcu(rdev, mddev)
 			if(rdev->raid_disk >= 0 &&
 				!test_bit(Faulty, &rdev->flags)) { 
@@ -4781,7 +4791,8 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 		}
 		return;
 	}
-
+	*/
+	
 	md_write_start(mddev, bi);
 
 	if (rw == READ &&
@@ -4800,7 +4811,9 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 	bi->bi_phys_segments = 1;	/* over-loaded to count active stripes */
 	atomic_set(&bi->dispatch_check, 1);
 
-	trace_block_bio_raid_queue(bi);
+	// if (bi->bi_rw & REQ_COMMIT)
+	//	trace_block_bio_raid_queue(bi);
+	
 	/* SW Modified */
 	bi->raid_epoch = NULL;
 
@@ -4907,7 +4920,7 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 
 			/* SW Modified */
 			if (bi->bi_rw & REQ_ORDERED && !bi->raid_epoch) {
-				
+				trace_block_bio_raid_queue(bi);
 				struct raid_epoch *raid_epoch = current->__raid_epoch;
 				// unsigned long flags;
 
@@ -4956,28 +4969,24 @@ static void make_request(struct mddev *mddev, struct bio * bi)
 				atomic_inc(&bi->raid_epoch->e_count);
 				if (bi->bi_rw & REQ_BARRIER) {
 					bi->raid_epoch->barrier = 1;
-				/*
-				printk(KERN_INFO "[RAID EPOCH] (%s) PID : %d "
-							"Finish RAID EPOCH! : %p"
-							"Epoch Count : %d\n"
-							,__func__
-							,current->pid
-							,raid_epoch
-							,atomic_read(&raid_epoch->e_count));
-				*/
+					//printk(KERN_INFO "[RAID EPOCH] (%s) PID : %d "
+					//		"Finish RAID EPOCH! : %p"
+					//		"Epoch Count : %d\n"
+					//		,__func__
+					//		,current->pid
+					//		,raid_epoch
+					//		,atomic_read(&raid_epoch->e_count));
 					current->__raid_epoch = NULL;
 					atomic_dec(&bi->raid_epoch->e_count);
 				}
 				spin_unlock(&bi->raid_epoch->raid_epoch_lock);
-				/*
-				printk(KERN_INFO "[RAID EPOCH] (%s) PID : %d %llu : %d "
-							"Epoch Pending : %d "
-							"Epoch Count : %d\n"
-							,__func__, current->pid
-							,(unsigned long long) sh->sector, dd_idx
-							,bi->raid_epoch->pending
-							,atomic_read(&bi->raid_epoch->e_count));
-				*/
+				//printk(KERN_INFO "[RAID EPOCH] (%s) PID : %d %llu : %d "
+				//			"Epoch Pending : %d "
+				//			"Epoch Count : %d\n"
+				//			,__func__, current->pid
+				//			,(unsigned long long) sh->sector, dd_idx
+				//			,bi->raid_epoch->pending
+				//			,atomic_read(&bi->raid_epoch->e_count));
 			}
 			set_bit(STRIPE_HANDLE, &sh->state);
 			clear_bit(STRIPE_DELAYED, &sh->state);
